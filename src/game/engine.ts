@@ -419,6 +419,7 @@ export class GameEngine {
       this.mobs?.dispose();
       this.world = null;
       this.mobs = null;
+      this.config = null;
       this.events.onError(error instanceof Error ? error.message : "世界加载失败");
       this.setScreen("menu");
       return false;
