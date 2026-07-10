@@ -55,3 +55,5 @@ npm run build
 ## 原创声明
 
 本项目的品牌、程序纹理与程序音频均为原创实现。它属于方块建造沙盒类型作品，不包含或分发其他商业游戏的纹理、音频或代码，也不隶属于任何其他游戏发行商。
+
+第三方依赖的版权与许可证文本见 [`public/THIRD_PARTY_NOTICES.txt`](public/THIRD_PARTY_NOTICES.txt)。该文件也会随生产站点一起发布。

@@ -487,17 +487,16 @@ function defaultRuntimePlayer(mode: GameMode = "survival", spawn: Vector3Tuple =
   };
 }
 
-function normalizeRuntimePlayer(raw: unknown, mode: GameMode, spawn: Vector3Tuple, issues?: DataIssue[]): RuntimePlayerState {
-  const source = isRecord(raw) ? raw : {};
-  const fallback = defaultRuntimePlayer(mode, spawn);
-  const inputHotbar = Array.isArray(source.hotbar) ? source.hotbar : [];
-  if (inputHotbar.length !== 9) {
-    issues?.push({ level: "warning", path: "player.hotbar", message: "Hotbar was repaired to nine slots.", repaired: true });
+function normalizeRuntimeHotbar(raw: unknown, mode: GameMode, issues: DataIssue[] | undefined, path: string): RuntimePlayerState["hotbar"] {
+  const fallback = createDefaultHotbar(mode);
+  const input = Array.isArray(raw) ? raw : [];
+  if (input.length !== 9) {
+    issues?.push({ level: "warning", path, message: "Hotbar was repaired to nine slots.", repaired: true });
   }
-  const hotbar = fallback.hotbar.map((fallbackSlot, index) => {
-    const slot = inputHotbar[index];
+  return fallback.map((fallbackSlot, index) => {
+    const slot = input[index];
     if (!isRecord(slot) || typeof slot.block !== "number" || !isBlockId(slot.block) || slot.block === BlockId.Air) {
-      if (slot !== undefined) issues?.push({ level: "warning", path: `player.hotbar[${index}]`, message: "Invalid hotbar slot was replaced.", repaired: true });
+      if (slot !== undefined) issues?.push({ level: "warning", path: `${path}[${index}]`, message: "Invalid hotbar slot was replaced.", repaired: true });
       return { ...fallbackSlot };
     }
     return {
@@ -505,6 +504,15 @@ function normalizeRuntimePlayer(raw: unknown, mode: GameMode, spawn: Vector3Tupl
       count: mode === "creative" ? -1 : integer(slot.count, fallbackSlot.count, 0, 999),
     };
   });
+}
+
+function normalizeRuntimePlayer(raw: unknown, mode: GameMode, spawn: Vector3Tuple, issues?: DataIssue[]): RuntimePlayerState {
+  const source = isRecord(raw) ? raw : {};
+  const fallback = defaultRuntimePlayer(mode, spawn);
+  const hotbar = normalizeRuntimeHotbar(source.hotbar, mode, issues, "player.hotbar");
+  const survivalHotbar = mode === "creative" && Array.isArray(source.survivalHotbar)
+    ? normalizeRuntimeHotbar(source.survivalHotbar, "survival", issues, "player.survivalHotbar")
+    : undefined;
   return {
     x: boundedNumber(source.x, fallback.x, -MAX_WORLD_COORDINATE, MAX_WORLD_COORDINATE),
     y: boundedNumber(source.y, fallback.y, -64, 512),
@@ -516,6 +524,7 @@ function normalizeRuntimePlayer(raw: unknown, mode: GameMode, spawn: Vector3Tupl
     oxygen: boundedNumber(source.oxygen, fallback.oxygen, 0, 20),
     selectedSlot: integer(source.selectedSlot, fallback.selectedSlot, 0, 8),
     hotbar,
+    survivalHotbar,
     mode,
     flying: mode === "creative" ? booleanValue(source.flying, true) : false,
   };

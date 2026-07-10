@@ -374,17 +374,23 @@ export class GameEngine {
     this.selectSlot((this.player.selectedSlot + (event.deltaY > 0 ? 1 : -1) + 9) % 9);
   };
 
-  async loadWorld(config: WorldConfig, saved?: EngineRuntimeSnapshot | null, enterAfterLoad = false): Promise<void> {
+  async loadWorld(config: WorldConfig, saved?: EngineRuntimeSnapshot | null, enterAfterLoad = false): Promise<boolean> {
     try {
       this.setScreen("loading");
       this.resetInput();
       this.events.onLoading(0.02, "初始化世界");
       this.world?.dispose();
       this.mobs?.dispose();
+      this.world = null;
+      this.mobs = null;
       this.config = { ...config };
-      this.player = saved ? { ...saved.player, hotbar: cloneHotbar(saved.player.hotbar) } : defaultPlayer(config.mode);
+      this.player = saved ? {
+        ...saved.player,
+        hotbar: cloneHotbar(saved.player.hotbar),
+        survivalHotbar: saved.player.survivalHotbar ? cloneHotbar(saved.player.survivalHotbar) : undefined,
+      } : defaultPlayer(config.mode);
       this.player.mode = config.mode;
-      this.survivalHotbar = null;
+      this.survivalHotbar = this.player.survivalHotbar ? cloneHotbar(this.player.survivalHotbar) : null;
       this.timeOfDay = saved?.timeOfDay ?? 0.24;
       this.weather = saved?.weather ?? "clear";
       this.world = new VoxelWorld(this.scene, config.seed, this.atlas, () => { this.dirty = true; });
@@ -407,9 +413,15 @@ export class GameEngine {
       this.setScreen(enterAfterLoad ? "playing" : "menu");
       if (enterAfterLoad) this.resume();
       else this.updateHud(true);
+      return true;
     } catch (error) {
+      this.world?.dispose();
+      this.mobs?.dispose();
+      this.world = null;
+      this.mobs = null;
       this.events.onError(error instanceof Error ? error.message : "世界加载失败");
       this.setScreen("menu");
+      return false;
     }
   }
 
@@ -531,7 +543,11 @@ export class GameEngine {
 
   snapshot(): EngineRuntimeSnapshot {
     return {
-      player: { ...this.player, hotbar: cloneHotbar(this.player.hotbar) },
+      player: {
+        ...this.player,
+        hotbar: cloneHotbar(this.player.hotbar),
+        survivalHotbar: this.survivalHotbar ? cloneHotbar(this.survivalHotbar) : undefined,
+      },
       patches: this.world?.patches ?? {},
       timeOfDay: this.timeOfDay,
       weather: this.weather,

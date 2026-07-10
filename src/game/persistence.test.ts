@@ -77,12 +77,15 @@ describe("world persistence", () => {
         mode: "creative",
         flying: true,
         hotbar: [{ block: BlockId.Glow, count: -1 }],
+        survivalHotbar: [{ block: BlockId.CopperOre, count: 27 }],
       },
     });
     const loaded = await loadWorld(creativeId);
     expect(loaded?.player.hotbar).toHaveLength(9);
     expect(loaded?.player.hotbar.every((slot) => slot.count === -1)).toBe(true);
     expect(loaded?.player.hotbar[0].block).toBe(BlockId.Glow);
+    expect(loaded?.player.survivalHotbar).toHaveLength(9);
+    expect(loaded?.player.survivalHotbar?.[0]).toEqual({ block: BlockId.CopperOre, count: 27 });
     await deleteWorld(creativeId);
   });
 

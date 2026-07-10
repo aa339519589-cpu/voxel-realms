@@ -130,6 +130,8 @@ export default function App() {
   const [worldSeed, setWorldSeed] = useState(randomSeed);
   const [worldMode, setWorldMode] = useState<GameMode>("survival");
   const [isSaving, setIsSaving] = useState(false);
+  const [worldReady, setWorldReady] = useState(false);
+  const [fatalError, setFatalError] = useState("");
 
   const showNotice = useCallback((text: string) => {
     setNotice(text);
@@ -188,10 +190,15 @@ export default function App() {
     let cancelled = false;
     let engine: GameEngine | null = null;
     const start = async () => {
+      let savedSettings = { ...DEFAULT_SETTINGS };
       try {
-        const savedSettings = await loadSettings();
-        if (cancelled) return;
-        setSettingsState(savedSettings);
+        savedSettings = await loadSettings();
+      } catch {
+        setError("设置读取失败，已使用默认设置。");
+      }
+      if (cancelled) return;
+      setSettingsState(savedSettings);
+      try {
         engine = new GameEngine(host, {
           onHud: setHud,
           onScreen: setScreen,
@@ -208,16 +215,28 @@ export default function App() {
         });
         engineRef.current = engine;
         engine.applySettings(savedSettings);
-        const available = await refreshWorlds();
+        let config = previewConfig();
+        let saved: WorldSave | null = null;
+        try {
+          const available = await refreshWorlds();
+          if (cancelled) return;
+          const listedConfig = available[0] ?? config;
+          saved = isPreview(listedConfig) ? null : await loadWorld(listedConfig.id);
+          config = saved?.config ?? listedConfig;
+        } catch (cause) {
+          setError(errorMessage(cause, "本地存档暂时无法读取，已打开预览世界。"));
+        }
         if (cancelled) return;
-        const listedConfig = available[0] ?? previewConfig();
-        const saved = isPreview(listedConfig) ? null : await loadWorld(listedConfig.id);
-        const config = saved?.config ?? listedConfig;
         currentConfigRef.current = config;
         setCurrentConfig(config);
-        await engine.loadWorld(config, saved, false);
+        setWorldReady(await engine.loadWorld(config, saved, false));
       } catch (cause) {
-        setError(errorMessage(cause, "浏览器无法启动 3D 世界。"));
+        engine?.dispose();
+        engine = null;
+        engineRef.current = null;
+        const message = errorMessage(cause, "浏览器无法启动 3D 世界。");
+        setFatalError(message);
+        setError("");
         setScreen("menu");
       }
     };
@@ -254,9 +273,12 @@ export default function App() {
       invalidatedWorlds.current.delete(effectiveConfig.id);
       currentConfigRef.current = effectiveConfig;
       setCurrentConfig(effectiveConfig);
-      await engine.loadWorld(effectiveConfig, saved, enter);
-      return true;
+      setWorldReady(false);
+      const ready = await engine.loadWorld(effectiveConfig, saved, enter);
+      setWorldReady(ready);
+      return ready;
     } catch (cause) {
+      setWorldReady(false);
       setError(errorMessage(cause, "世界无法加载。"));
       return false;
     }
@@ -272,7 +294,10 @@ export default function App() {
       currentConfigRef.current = config;
       setCurrentConfig(config);
       setNewWorldOpen(false);
-      await engine.loadWorld(config, null, true);
+      setWorldReady(false);
+      const ready = await engine.loadWorld(config, null, true);
+      setWorldReady(ready);
+      if (!ready) return;
       await persistSnapshot(engine.snapshot());
       await refreshWorlds();
     } catch (cause) {
@@ -431,8 +456,9 @@ export default function App() {
   }, [inventorySearch, screen, hud.hotbar]);
 
   return <main className={`game-root crosshair-${settings.crosshair}`} ref={viewportRef}>
-    {screen === "loading" ? <LoadingScreen progress={loading.progress} stage={loading.stage} /> : null}
-    {screen === "menu" ? <TitleMenu config={currentConfig} hasSave={Boolean(currentConfig && !isPreview(currentConfig))} worldCount={worlds.length} onContinue={() => engineRef.current?.enterGame()} onNew={() => setNewWorldOpen(true)} onWorlds={() => setWorldListOpen(true)} onSettings={() => openSettings("menu")} /> : null}
+    {fatalError ? <FatalScreen message={fatalError} /> : null}
+    {!fatalError && screen === "loading" ? <LoadingScreen progress={loading.progress} stage={loading.stage} /> : null}
+    {!fatalError && screen === "menu" ? <TitleMenu config={currentConfig} hasSave={Boolean(worldReady && currentConfig && !isPreview(currentConfig))} worldCount={worlds.length} onContinue={() => engineRef.current?.enterGame()} onNew={() => setNewWorldOpen(true)} onWorlds={() => setWorldListOpen(true)} onSettings={() => openSettings("menu")} /> : null}
     {screen === "playing" ? <GameHud hud={hud} debug={debug} isSaving={isSaving} onPause={() => engineRef.current?.pause()} onSelect={(index) => engineRef.current?.selectSlot(index)} /> : null}
     {screen === "paused" ? <PauseMenu config={currentConfig} onResume={() => engineRef.current?.resume()} onSave={() => { const engine = engineRef.current; if (engine) persistSnapshot(engine.snapshot()); showNotice("保存请求已提交"); }} onSettings={() => openSettings("paused")} onMenu={() => engineRef.current?.returnToMenu()} /> : null}
     {screen === "inventory" ? <InventoryScreen mode={hud.mode} items={inventory} selected={hud.hotbar[hud.selectedSlot]?.block} query={inventorySearch} onQuery={setInventorySearch} onSelect={(block) => engineRef.current?.assignSelectedBlock(block)} onCraft={(recipeId) => engineRef.current?.craftRecipe(recipeId)} onClose={() => engineRef.current?.resume()} /> : null}
@@ -450,6 +476,10 @@ export default function App() {
 
 function LoadingScreen({ progress, stage }: { progress: number; stage: string }) {
   return <section className="loading-screen overlay"><div className="voxel-logo"><span>VOXEL</span><b>//</b><span>REALMS</span></div><div className="loading-status"><span>{stage}</span><strong>{Math.round(progress * 100)}%</strong></div><div className="loading-track"><i style={{ width: `${Math.max(2, progress * 100)}%` }} /></div></section>;
+}
+
+function FatalScreen({ message }: { message: string }) {
+  return <section className="fatal-screen overlay" role="alert"><div><Zap size={28} /><span className="kicker">RENDERER UNAVAILABLE</span><h1>3D 世界无法启动</h1><p>{message}</p><button className="menu-primary" onClick={() => window.location.reload()}><RefreshCcw size={18} />重新加载</button></div></section>;
 }
 
 function TitleMenu({ config, hasSave, worldCount, onContinue, onNew, onWorlds, onSettings }: { config: WorldConfig | null; hasSave: boolean; worldCount: number; onContinue: () => void; onNew: () => void; onWorlds: () => void; onSettings: () => void }) {

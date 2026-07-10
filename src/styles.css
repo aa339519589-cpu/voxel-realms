@@ -33,6 +33,12 @@ button:focus-visible, input:focus-visible { outline: 3px solid #f4d572; outline-
 .loading-status strong { color: #f1e8bd; font-family: ui-monospace, monospace; }
 .loading-track { width: min(440px, calc(100vw - 48px)); height: 12px; margin-top: -24px; padding: 2px; border: 2px solid rgba(243, 240, 216, .52); background: #0a100c; box-shadow: 0 3px 0 rgba(0, 0, 0, .4); }
 .loading-track i { display: block; height: 100%; background: #83b855; box-shadow: inset 0 -2px 0 rgba(23, 60, 22, .35); transition: width 140ms ease; }
+.fatal-screen { display: grid; place-items: center; padding: 20px; background: #101914; }
+.fatal-screen > div { display: grid; width: min(440px, 100%); gap: 11px; padding: 30px; border: 2px solid rgba(222, 157, 119, .55); background: #281b16; box-shadow: 0 8px 0 rgba(0,0,0,.3); }
+.fatal-screen > div > svg { color: #e39a78; }
+.fatal-screen h1 { margin: 3px 0 0; color: #f5ebdd; font-size: 25px; }
+.fatal-screen p { margin: 0 0 12px; color: #cdbeb3; font-size: 11px; line-height: 1.6; }
+.fatal-screen button { display: inline-flex; min-height: 42px; align-items: center; justify-content: center; gap: 8px; border: 2px solid; font-weight: 800; }
 
 .title-menu { display: flex; flex-direction: column; padding: max(24px, env(safe-area-inset-top)) max(28px, env(safe-area-inset-right)) max(20px, env(safe-area-inset-bottom)) max(28px, env(safe-area-inset-left)); background: rgba(5, 12, 9, .2); box-shadow: inset 0 -240px 180px -150px rgba(4, 9, 7, .92), inset 260px 0 240px -210px rgba(3, 8, 5, .55); }
 .title-top, .title-footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; }

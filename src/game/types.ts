@@ -29,6 +29,7 @@ export interface PlayerState {
   oxygen: number;
   selectedSlot: number;
   hotbar: HotbarSlot[];
+  survivalHotbar?: HotbarSlot[];
   mode: GameMode;
   flying: boolean;
 }
