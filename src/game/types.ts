@@ -29,7 +29,9 @@ export interface PlayerState {
   oxygen: number;
   selectedSlot: number;
   hotbar: HotbarSlot[];
+  backpack: HotbarSlot[];
   survivalHotbar?: HotbarSlot[];
+  survivalBackpack?: HotbarSlot[];
   mode: GameMode;
   flying: boolean;
 }
@@ -62,6 +64,7 @@ export interface WorldConfig {
   name: string;
   seed: string;
   mode: GameMode;
+  generatorVersion: number;
   createdAt: number;
   updatedAt: number;
 }

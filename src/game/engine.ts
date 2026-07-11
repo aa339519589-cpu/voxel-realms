@@ -11,8 +11,14 @@ import {
 } from "./math";
 import { MobManager } from "./mobs";
 import { CRAFTING_RECIPES } from "./recipes";
-import { addBlock, craftIntoHotbar, createDefaultHotbar, selectSurvivalBlock } from "./inventory";
-import { createTextureAtlas } from "./textures";
+import {
+  addBlockToInventory,
+  craftIntoInventory,
+  createDefaultHotbar,
+  createEmptyBackpack,
+  selectSurvivalInventoryBlock,
+} from "./inventory";
+import { createTextureAtlas, getTileUV } from "./textures";
 import {
   DEFAULT_SETTINGS,
   type EngineEvents,
@@ -41,6 +47,9 @@ const FIXED_STEP = 1 / 60;
 const EYE_HEIGHT = 1.62;
 const REACH = 6;
 const MAX_WORLD_COORDINATE = 1_000_000;
+const BREAK_ACTION_DURATION = 0.22;
+const PLACE_ACTION_DURATION = 0.24;
+const PLACEMENT_PULSE_DURATION = 0.3;
 
 const blockColors: Partial<Record<BlockId, number>> = {
   [BlockId.Grass]: 0x5e8f43,
@@ -61,10 +70,40 @@ const blockColors: Partial<Record<BlockId, number>> = {
   [BlockId.Clay]: 0x879aa6,
   [BlockId.Basalt]: 0x363b43,
   [BlockId.Cactus]: 0x3d8051,
+  [BlockId.Gravel]: 0x817e76,
+  [BlockId.Limestone]: 0xc4c0ad,
+  [BlockId.Marble]: 0xd9dcda,
+  [BlockId.GoldOre]: 0xe4b849,
+  [BlockId.BirchLog]: 0xd7d1b8,
+  [BlockId.BirchLeaves]: 0x537d47,
+  [BlockId.BirchPlanks]: 0xd4b778,
+  [BlockId.StoneBricks]: 0x6e777d,
+  [BlockId.MossyCobblestone]: 0x586b50,
+  [BlockId.PolishedBasalt]: 0x3e444b,
+  [BlockId.CutCopper]: 0xa96145,
+  [BlockId.Terracotta]: 0xab624a,
+  [BlockId.Bookshelf]: 0x8f623e,
+  [BlockId.AmberLamp]: 0xf1b64c,
+  [BlockId.Ice]: 0xa9dce5,
+  [BlockId.TintedGlass]: 0x526a79,
+  [BlockId.Sandstone]: 0xd6be78,
+  [BlockId.CoalBlock]: 0x252a2e,
+  [BlockId.IronBlock]: 0xb8bfc0,
+  [BlockId.CopperBlock]: 0xad6447,
+  [BlockId.GoldBlock]: 0xe0b63c,
+  [BlockId.CrystalOre]: 0x58d7d1,
+  [BlockId.CrystalBlock]: 0x4ed4c7,
+  [BlockId.SpruceLog]: 0x554332,
+  [BlockId.SpruceLeaves]: 0x285a45,
+  [BlockId.SprucePlanks]: 0x72553a,
 };
 
 function isCoarsePointer(): boolean {
   return window.matchMedia("(pointer: coarse)").matches;
+}
+
+function damp(current: number, target: number, response: number, delta: number): number {
+  return THREE.MathUtils.lerp(current, target, 1 - Math.exp(-response * delta));
 }
 
 function cloneHotbar(hotbar: HotbarSlot[]): HotbarSlot[] {
@@ -83,6 +122,7 @@ function defaultPlayer(mode: GameMode): PlayerState {
     oxygen: 20,
     selectedSlot: 0,
     hotbar: createDefaultHotbar(mode),
+    backpack: createEmptyBackpack(),
     mode,
     flying: mode === "creative",
   };
@@ -94,14 +134,28 @@ export class GameEngine {
   private readonly scene = new THREE.Scene();
   private readonly camera = new THREE.PerspectiveCamera(DEFAULT_SETTINGS.fov, 1, 0.05, 280);
   private readonly atlas = createTextureAtlas();
+  private readonly viewModel = new THREE.Group();
+  private readonly heldBlockGeometry = new THREE.BoxGeometry(0.34, 0.34, 0.34);
+  private readonly heldBlockMaterial = new THREE.MeshBasicMaterial({
+    map: this.atlas,
+    transparent: true,
+    alphaTest: 0.08,
+    depthTest: false,
+    depthWrite: false,
+    toneMapped: false,
+  });
+  private readonly heldBlock = new THREE.Mesh(this.heldBlockGeometry, this.heldBlockMaterial);
   private readonly hemisphere = new THREE.HemisphereLight(0xc9e4ff, 0x364027, 1);
   private readonly sunlight = new THREE.DirectionalLight(0xfff2d0, 1.2);
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9d }));
   private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.8, 10, 8), new THREE.MeshBasicMaterial({ color: 0xdbe6f4 }));
   private readonly stars: THREE.Points;
   private readonly clouds = new THREE.Group();
+  private readonly cloudMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.74, depthWrite: false });
   private readonly rain: THREE.Points;
   private readonly selection: THREE.LineSegments;
+  private readonly placementOutline: THREE.LineSegments;
+  private readonly motionQuery: MediaQueryList;
   private readonly keys = new Set<string>();
   private readonly velocity = new THREE.Vector3();
   private readonly mobileMove = new THREE.Vector2();
@@ -110,6 +164,14 @@ export class GameEngine {
   private readonly skyDay = new THREE.Color(0x79add1);
   private readonly skyNight = new THREE.Color(0x07111f);
   private readonly skyDusk = new THREE.Color(0xc98262);
+  private readonly skyRain = new THREE.Color(0x526c79);
+  private readonly skyCurrent = new THREE.Color(0x79add1);
+  private readonly rainLight = new THREE.Color(0xc7d4da);
+  private readonly cloudClear = new THREE.Color(0xffffff);
+  private readonly cloudRain = new THREE.Color(0x88969d);
+  private readonly selectionBreakColor = new THREE.Color(0xffa34f);
+  private readonly viewDirection = new THREE.Vector3();
+  private readonly scratchVector = new THREE.Vector3();
   private world: VoxelWorld | null = null;
   private mobs: MobManager | null = null;
   private config: WorldConfig | null = null;
@@ -122,14 +184,26 @@ export class GameEngine {
   private breakKey = "";
   private breakProgress = 0;
   private breakSoundTimer = 0;
+  private breakSwingTime = 0;
+  private breakActionTime = 0;
+  private placeActionTime = 0;
+  private heldSwapTime = 0;
+  private heldBlockId = BlockId.Air;
+  private placementPulseTime = 0;
   private onGround = false;
   private airbornePeak = 0;
   private hungerDistance = 0;
   private damageCooldown = 0;
+  private damageImpulse = 0;
+  private landingImpulse = 0;
   private stepDistance = 0;
   private bobTime = 0;
+  private movementAmount = 0;
+  private sprinting = false;
+  private sprintBlend = 0;
   private timeOfDay = 0.24;
   private weather: Weather = "clear";
+  private weatherBlend = 0;
   private weatherTimer = 75;
   private elapsed = 0;
   private accumulator = 0;
@@ -145,13 +219,19 @@ export class GameEngine {
   private lastSpaceAt = 0;
   private animationFrame = 0;
   private disposed = false;
+  private loadRevision = 0;
   private nightAmount = 0;
+  private reducedMotion = false;
   private survivalHotbar: HotbarSlot[] | null = null;
+  private survivalBackpack: HotbarSlot[] | null = null;
 
   constructor(
     private readonly host: HTMLElement,
     private readonly events: EngineEvents,
   ) {
+    this.motionQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    this.reducedMotion = this.motionQuery.matches;
+    this.motionQuery.addEventListener("change", this.motionPreferenceChange);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
     this.canvas = this.renderer.domElement;
     this.canvas.className = "game-canvas";
@@ -160,10 +240,14 @@ export class GameEngine {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1;
-    this.scene.background = this.skyDay.clone();
+    this.scene.background = this.skyCurrent;
     this.scene.fog = new THREE.Fog(this.skyDay.getHex(), 30, 92);
     this.camera.rotation.order = "YXZ";
-    this.scene.add(this.hemisphere, this.sunlight, this.sun, this.moon);
+    this.heldBlock.renderOrder = 100;
+    this.heldBlock.frustumCulled = false;
+    this.viewModel.add(this.heldBlock);
+    this.camera.add(this.viewModel);
+    this.scene.add(this.camera, this.hemisphere, this.sunlight, this.sun, this.moon);
     this.sunlight.castShadow = true;
     this.sunlight.shadow.mapSize.set(1024, 1024);
     this.sunlight.shadow.camera.left = -26;
@@ -177,8 +261,10 @@ export class GameEngine {
     this.stars = this.createStars();
     this.rain = this.createRain();
     this.selection = this.createSelection();
-    this.scene.add(this.stars, this.clouds, this.rain, this.selection);
+    this.placementOutline = this.createPlacementOutline();
+    this.scene.add(this.stars, this.clouds, this.rain, this.selection, this.placementOutline);
     this.createClouds();
+    this.updateHeldBlock();
     this.bindEvents();
     this.resize();
     this.applySettings(DEFAULT_SETTINGS);
@@ -209,11 +295,15 @@ export class GameEngine {
     }
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    return new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0x8cc9e8, size: 0.095, transparent: true, opacity: 0.62, depthWrite: false }));
+    const rain = new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0x8cc9e8, size: 0.095, transparent: true, opacity: 0, depthWrite: false }));
+    rain.visible = false;
+    return rain;
   }
 
   private createSelection(): THREE.LineSegments {
-    const geometry = new THREE.EdgesGeometry(new THREE.BoxGeometry(1.012, 1.012, 1.012));
+    const box = new THREE.BoxGeometry(1.012, 1.012, 1.012);
+    const geometry = new THREE.EdgesGeometry(box);
+    box.dispose();
     const material = new THREE.LineBasicMaterial({ color: 0xf4f5ec, transparent: true, opacity: 0.88, depthTest: false });
     const lines = new THREE.LineSegments(geometry, material);
     lines.renderOrder = 10;
@@ -221,17 +311,28 @@ export class GameEngine {
     return lines;
   }
 
+  private createPlacementOutline(): THREE.LineSegments {
+    const box = new THREE.BoxGeometry(1.018, 1.018, 1.018);
+    const geometry = new THREE.EdgesGeometry(box);
+    box.dispose();
+    const material = new THREE.LineBasicMaterial({ color: 0xbdf47d, transparent: true, opacity: 0, depthTest: false });
+    const lines = new THREE.LineSegments(geometry, material);
+    lines.renderOrder = 11;
+    lines.visible = false;
+    return lines;
+  }
+
   private createClouds(): void {
-    const material = new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.74, depthWrite: false });
     for (let index = 0; index < 14; index += 1) {
       const cloud = new THREE.Group();
       const pieces = 3 + (index % 4);
       for (let piece = 0; piece < pieces; piece += 1) {
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(5 + (piece % 2) * 3, 1.1, 2.8 + (piece % 3)), material);
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(5 + (piece % 2) * 3, 1.1, 2.8 + (piece % 3)), this.cloudMaterial);
         mesh.position.set(piece * 3.2, Math.sin(piece * 2) * 0.35, (piece % 2) * 1.8);
         cloud.add(mesh);
       }
-      cloud.position.set((index % 5) * 30 - 60, 31 + (index % 3) * 2, Math.floor(index / 5) * 35 - 45);
+      cloud.userData.offsetY = 1 + (index % 3) * 2;
+      cloud.position.set((index % 5) * 30 - 60, 30 + cloud.userData.offsetY, Math.floor(index / 5) * 35 - 45);
       cloud.scale.setScalar(0.8 + (index % 3) * 0.18);
       this.clouds.add(cloud);
     }
@@ -251,6 +352,20 @@ export class GameEngine {
     this.canvas.addEventListener("contextmenu", this.contextMenu);
     this.canvas.addEventListener("click", this.canvasClick);
   }
+
+  private readonly motionPreferenceChange = (event: MediaQueryListEvent) => {
+    this.reducedMotion = event.matches;
+    if (this.reducedMotion) {
+      this.damageImpulse = 0;
+      this.landingImpulse = 0;
+      this.breakActionTime = 0;
+      this.placeActionTime = 0;
+      this.heldSwapTime = 0;
+      this.sprintBlend = 0;
+      this.camera.fov = this.settings.fov;
+      this.camera.updateProjectionMatrix();
+    }
+  };
 
   private readonly contextMenu = (event: Event) => event.preventDefault();
 
@@ -277,6 +392,37 @@ export class GameEngine {
     this.breaking = false;
     this.breakProgress = 0;
     this.breakKey = "";
+    this.breakSwingTime = 0;
+    this.sprinting = false;
+    this.movementAmount = 0;
+  }
+
+  private resetWorldEffects(): void {
+    this.target = null;
+    this.targetBlock = BlockId.Air;
+    this.selection.visible = false;
+    this.selection.scale.setScalar(1);
+    this.placementPulseTime = 0;
+    this.placementOutline.visible = false;
+    this.breakActionTime = 0;
+    this.placeActionTime = 0;
+    this.heldSwapTime = 0;
+    this.damageCooldown = 0;
+    this.damageImpulse = 0;
+    this.landingImpulse = 0;
+    this.onGround = false;
+    this.airbornePeak = this.player.y;
+    this.hungerDistance = 0;
+    this.stepDistance = 0;
+    this.bobTime = 0;
+    this.movementAmount = 0;
+    this.sprinting = false;
+    this.sprintBlend = 0;
+    this.accumulator = 0;
+    this.lastSpaceAt = 0;
+    this.camera.fov = this.settings.fov;
+    this.camera.updateProjectionMatrix();
+    this.host.classList.remove("damage-flash");
   }
 
   private readonly pointerLockChange = () => {
@@ -375,6 +521,10 @@ export class GameEngine {
   };
 
   async loadWorld(config: WorldConfig, saved?: EngineRuntimeSnapshot | null, enterAfterLoad = false): Promise<boolean> {
+    if (this.disposed) return false;
+    const loadRevision = ++this.loadRevision;
+    let loadingWorld: VoxelWorld | null = null;
+    let loadingMobs: MobManager | null = null;
     try {
       this.setScreen("loading");
       this.resetInput();
@@ -387,26 +537,47 @@ export class GameEngine {
       this.player = saved ? {
         ...saved.player,
         hotbar: cloneHotbar(saved.player.hotbar),
+        backpack: cloneHotbar(saved.player.backpack),
         survivalHotbar: saved.player.survivalHotbar ? cloneHotbar(saved.player.survivalHotbar) : undefined,
+        survivalBackpack: saved.player.survivalBackpack ? cloneHotbar(saved.player.survivalBackpack) : undefined,
       } : defaultPlayer(config.mode);
       this.player.mode = config.mode;
+      this.player.flying = config.mode === "creative" && this.player.flying;
       this.survivalHotbar = this.player.survivalHotbar ? cloneHotbar(this.player.survivalHotbar) : null;
+      this.survivalBackpack = this.player.survivalBackpack ? cloneHotbar(this.player.survivalBackpack) : null;
       this.timeOfDay = saved?.timeOfDay ?? 0.24;
       this.weather = saved?.weather ?? "clear";
-      this.world = new VoxelWorld(this.scene, config.seed, this.atlas, () => { this.dirty = true; });
-      this.world.setRenderDistance(this.settings.renderDistance);
-      this.world.applyPatches(saved?.patches);
+      this.weatherBlend = this.weather === "rain" ? 1 : 0;
+      this.weatherTimer = this.weather === "rain" ? 75 : 115;
+      this.velocity.set(0, 0, 0);
+      this.resetWorldEffects();
+      this.heldBlockId = BlockId.Air;
+      this.updateHeldBlock();
+      loadingWorld = new VoxelWorld(this.scene, config.seed, this.atlas, config.generatorVersion, () => { this.dirty = true; });
+      this.world = loadingWorld;
+      loadingWorld.setRenderDistance(this.settings.renderDistance);
+      loadingWorld.applyPatches(saved?.patches);
       if (!saved) {
         const spawn = this.findSafeSpawn();
         this.player.x = spawn.x;
         this.player.y = spawn.y;
         this.player.z = spawn.z;
+        this.airbornePeak = spawn.y;
       }
-      this.velocity.set(0, 0, 0);
       this.positionCamera();
-      await this.world.warmStart(this.player.x, this.player.z, (progress) => this.events.onLoading(0.08 + progress * 0.84, progress < 0.5 ? "生成地形" : "构建区块网格"));
-      this.mobs = new MobManager(this.scene, (x, z) => (this.world?.surfaceHeight(x, z) ?? 0) + 0.01, (damage) => this.damage(damage, "黑暗中的生物"));
-      this.mobs.populate(this.player.x, this.player.z);
+      await loadingWorld.warmStart(this.player.x, this.player.z, (progress) => {
+        if (!this.disposed && loadRevision === this.loadRevision) {
+          this.events.onLoading(0.08 + progress * 0.84, progress < 0.5 ? "生成地形" : "构建区块网格");
+        }
+      });
+      if (this.disposed || loadRevision !== this.loadRevision) {
+        loadingWorld.dispose();
+        if (this.world === loadingWorld) this.world = null;
+        return false;
+      }
+      loadingMobs = new MobManager(this.scene, (x, z) => (this.world?.surfaceHeight(x, z) ?? 0) + 0.01, (damage) => this.damage(damage, "黑暗中的生物"));
+      this.mobs = loadingMobs;
+      loadingMobs.populate(this.player.x, this.player.z);
       this.events.onLoading(1, "世界就绪");
       this.dirty = false;
       this.saveTimer = 0;
@@ -415,13 +586,15 @@ export class GameEngine {
       else this.updateHud(true);
       return true;
     } catch (error) {
-      this.world?.dispose();
-      this.mobs?.dispose();
-      this.world = null;
-      this.mobs = null;
-      this.config = null;
-      this.events.onError(error instanceof Error ? error.message : "世界加载失败");
-      this.setScreen("menu");
+      loadingMobs?.dispose();
+      loadingWorld?.dispose();
+      if (this.world === loadingWorld) this.world = null;
+      if (this.mobs === loadingMobs) this.mobs = null;
+      if (!this.disposed && loadRevision === this.loadRevision) {
+        this.config = null;
+        this.events.onError(error instanceof Error ? error.message : "世界加载失败");
+        this.setScreen("menu");
+      }
       return false;
     }
   }
@@ -480,6 +653,14 @@ export class GameEngine {
     this.player.y = spawn.y;
     this.player.z = spawn.z;
     this.velocity.set(0, 0, 0);
+    this.onGround = false;
+    this.airbornePeak = spawn.y;
+    this.damageCooldown = 0;
+    this.damageImpulse = 0;
+    this.landingImpulse = 0;
+    this.movementAmount = 0;
+    this.sprinting = false;
+    this.sprintBlend = 0;
     this.resume();
   }
 
@@ -498,8 +679,42 @@ export class GameEngine {
     return { ...this.settings };
   }
 
+  private updateHeldBlock(): void {
+    const slot = this.player.hotbar[this.player.selectedSlot];
+    if (!slot || slot.block === BlockId.Air || slot.count === 0) {
+      this.heldBlockId = BlockId.Air;
+      this.heldBlock.visible = false;
+      return;
+    }
+    const changed = this.heldBlockId !== slot.block;
+    this.heldBlockId = slot.block;
+    const definition = getBlock(slot.block);
+    const tiles = [
+      definition.textures.side,
+      definition.textures.side,
+      definition.textures.top,
+      definition.textures.bottom,
+      definition.textures.side,
+      definition.textures.side,
+    ] as const;
+    const uvAttribute = this.heldBlockGeometry.getAttribute("uv") as THREE.BufferAttribute;
+    for (let face = 0; face < tiles.length; face += 1) {
+      const uv = getTileUV(tiles[face], 0.06);
+      const offset = face * 4;
+      uvAttribute.setXY(offset, uv.u0, uv.v1);
+      uvAttribute.setXY(offset + 1, uv.u1, uv.v1);
+      uvAttribute.setXY(offset + 2, uv.u0, uv.v0);
+      uvAttribute.setXY(offset + 3, uv.u1, uv.v0);
+    }
+    uvAttribute.needsUpdate = true;
+    this.heldBlockMaterial.opacity = definition.renderLayer === "translucent" ? 0.82 : 1;
+    this.heldBlock.visible = true;
+    if (changed) this.heldSwapTime = this.reducedMotion ? 0 : 0.16;
+  }
+
   selectSlot(index: number): void {
     this.player.selectedSlot = Math.max(0, Math.min(8, Math.round(index)));
+    this.updateHeldBlock();
     this.showMessage(getBlock(this.player.hotbar[this.player.selectedSlot].block).name);
     audio.play("ui");
     this.updateHud(true);
@@ -510,10 +725,11 @@ export class GameEngine {
     if (this.player.mode === "creative") {
       slot.block = block;
       slot.count = -1;
-    } else if (!selectSurvivalBlock(this.player.hotbar, this.player.selectedSlot, block)) {
+    } else if (!selectSurvivalInventoryBlock(this.player.hotbar, this.player.backpack, this.player.selectedSlot, block)) {
       this.showMessage("背包中没有该方块");
       return;
     }
+    this.updateHeldBlock();
     this.showMessage(getBlock(block).name);
     this.dirty = true;
     this.updateHud(true);
@@ -522,20 +738,23 @@ export class GameEngine {
   getInventory(): Array<{ block: BlockId; count: number; name: string }> {
     if (this.player.mode === "creative") return ALL_BLOCKS.filter((block) => block.id !== BlockId.Air).map((block) => ({ block: block.id, count: -1, name: block.name }));
     const counts = new Map<BlockId, number>();
-    this.player.hotbar.forEach((slot) => counts.set(slot.block, (counts.get(slot.block) ?? 0) + Math.max(0, slot.count)));
-    return Array.from(counts, ([block, count]) => ({ block, count, name: getBlock(block).name })).filter((item) => item.count > 0);
+    [...this.player.hotbar, ...this.player.backpack].forEach((slot) => {
+      if (slot.block !== BlockId.Air && slot.count > 0) counts.set(slot.block, (counts.get(slot.block) ?? 0) + slot.count);
+    });
+    return Array.from(counts, ([block, count]) => ({ block, count, name: getBlock(block).name }));
   }
 
   craftRecipe(recipeId: string): boolean {
     if (this.player.mode !== "survival") return false;
     const recipe = CRAFTING_RECIPES.find((item) => item.id === recipeId);
     if (!recipe) return false;
-    if (!craftIntoHotbar(this.player.hotbar, recipe)) {
+    if (!craftIntoInventory(this.player.hotbar, this.player.backpack, recipe)) {
       this.showMessage("材料不足或快捷栏已满");
       audio.play("ui", "generic", { pitch: 0.65 });
       return false;
     }
     audio.play("pickup", recipe.output.block, { pitch: 1.12 });
+    this.updateHeldBlock();
     this.showMessage(`合成 ${recipe.name} ×${recipe.output.count}`);
     this.dirty = true;
     this.updateHud(true);
@@ -547,7 +766,9 @@ export class GameEngine {
       player: {
         ...this.player,
         hotbar: cloneHotbar(this.player.hotbar),
+        backpack: cloneHotbar(this.player.backpack),
         survivalHotbar: this.survivalHotbar ? cloneHotbar(this.survivalHotbar) : undefined,
+        survivalBackpack: this.survivalBackpack ? cloneHotbar(this.survivalBackpack) : undefined,
       },
       patches: this.world?.patches ?? {},
       timeOfDay: this.timeOfDay,
@@ -603,15 +824,20 @@ export class GameEngine {
     }
     if (command === "gamemode" && (args[0] === "creative" || args[0] === "survival")) {
       const nextMode = args[0];
+      const modeChanged = nextMode !== this.player.mode;
       if (nextMode === "creative" && this.player.mode !== "creative") {
         this.survivalHotbar = cloneHotbar(this.player.hotbar);
+        this.survivalBackpack = cloneHotbar(this.player.backpack);
         this.player.hotbar.forEach((slot) => { slot.count = -1; });
       } else if (nextMode === "survival" && this.player.mode !== "survival") {
         this.player.hotbar = cloneHotbar(this.survivalHotbar ?? createDefaultHotbar("survival"));
+        this.player.backpack = cloneHotbar(this.survivalBackpack ?? createEmptyBackpack());
         this.survivalHotbar = null;
+        this.survivalBackpack = null;
       }
       this.player.mode = nextMode;
-      this.player.flying = nextMode === "creative";
+      if (modeChanged) this.player.flying = nextMode === "creative";
+      this.updateHeldBlock();
       if (this.config) {
         this.config = { ...this.config, mode: nextMode };
         this.events.onConfigChange({ ...this.config });
@@ -676,14 +902,16 @@ export class GameEngine {
       this.showMessage(`丢弃 ${getBlock(slot.block).name}`);
       this.dirty = true;
       audio.play("ui");
+      this.updateHeldBlock();
       this.updateHud(true);
     }
   }
 
   private addToInventory(block: BlockId, count = 1, playSound = true): boolean {
-    const remaining = addBlock(this.player.hotbar, block, count);
-    if (remaining > 0) this.showMessage("快捷栏已满，方块未拾取");
-    if (playSound) audio.play("pickup");
+    const remaining = addBlockToInventory(this.player.hotbar, this.player.backpack, block, count);
+    if (remaining > 0) this.showMessage("背包已满，先整理空间");
+    if (playSound && remaining === 0) audio.play("pickup", block);
+    this.updateHeldBlock();
     return remaining === 0;
   }
 
@@ -692,10 +920,19 @@ export class GameEngine {
     const { x, y, z } = this.target.voxel;
     const block = this.world.getBlock(x, y, z);
     if (block === BlockId.Air || block === BlockId.Water || y <= 0) return;
+    const drop = block === BlockId.Stone ? BlockId.Cobblestone : block;
+    if (this.player.mode === "survival" && !this.addToInventory(drop, 1, false)) return;
     this.world.setBlock(x, y, z, BlockId.Air);
-    if (this.player.mode === "survival") this.addToInventory(block);
+    if (this.player.mode === "survival") {
+      audio.play("pickup", drop, { volume: 0.72, pitch: 1.08 });
+      if ((block === BlockId.OakLeaves || block === BlockId.BirchLeaves || block === BlockId.SpruceLeaves) && Math.random() < 0.16) {
+        this.player.hunger = Math.min(20, this.player.hunger + 2);
+        this.showMessage("在叶片间找到野果 · 饥饿 +2");
+      }
+    }
     this.spawnParticles(block, x + 0.5, y + 0.5, z + 0.5);
-    audio.play("break", getBlock(block).name);
+    audio.play("break", block);
+    this.breakActionTime = BREAK_ACTION_DURATION;
     this.breakProgress = 0;
     this.breakKey = "";
     this.target = null;
@@ -707,7 +944,7 @@ export class GameEngine {
   private placeSelected(): void {
     if (!this.world || !this.target?.previousVoxel || this.screen !== "playing") return;
     const slot = this.player.hotbar[this.player.selectedSlot];
-    if (slot.count === 0) {
+    if (slot.block === BlockId.Air || slot.count === 0) {
       this.showMessage("该方块已用完");
       return;
     }
@@ -721,8 +958,14 @@ export class GameEngine {
     }
     this.world.setBlock(x, y, z, slot.block);
     if (slot.count > 0) slot.count -= 1;
-    audio.play("place", getBlock(slot.block).name);
+    audio.play("place", slot.block);
     this.spawnParticles(slot.block, x + 0.5, y + 0.5, z + 0.5, 5);
+    this.placeActionTime = PLACE_ACTION_DURATION;
+    this.placementPulseTime = PLACEMENT_PULSE_DURATION;
+    this.placementOutline.position.set(x + 0.5, y + 0.5, z + 0.5);
+    this.placementOutline.scale.setScalar(1);
+    this.placementOutline.visible = true;
+    this.updateHeldBlock();
     this.dirty = true;
     this.updateHud(true);
   }
@@ -765,6 +1008,7 @@ export class GameEngine {
     if (this.player.mode === "creative" || this.damageCooldown > 0 || this.screen === "dead") return;
     this.player.health = Math.max(0, this.player.health - amount);
     this.damageCooldown = 0.55;
+    if (!this.reducedMotion) this.damageImpulse = Math.max(this.damageImpulse, THREE.MathUtils.clamp(0.18 + amount * 0.055, 0.2, 0.65));
     audio.play("hurt");
     this.host.classList.remove("damage-flash");
     void this.host.offsetWidth;
@@ -784,9 +1028,8 @@ export class GameEngine {
       this.selection.visible = false;
       return;
     }
-    const direction = new THREE.Vector3();
-    this.camera.getWorldDirection(direction);
-    this.target = raycastVoxels(this.camera.position, direction, REACH, (x, y, z) => {
+    this.camera.getWorldDirection(this.viewDirection);
+    this.target = raycastVoxels(this.camera.position, this.viewDirection, REACH, (x, y, z) => {
       const block = this.world!.getBlock(x, y, z);
       return block !== BlockId.Air && block !== BlockId.Water;
     });
@@ -795,13 +1038,17 @@ export class GameEngine {
       this.targetBlock = BlockId.Air;
       this.breakProgress = 0;
       this.breakKey = "";
+      this.breakSwingTime = 0;
       return;
     }
     const { x, y, z } = this.target.voxel;
     this.targetBlock = this.world.getBlock(x, y, z);
     this.selection.visible = true;
     this.selection.position.set(x + 0.5, y + 0.5, z + 0.5);
-    if (!this.breaking || this.player.mode === "creative") return;
+    if (!this.breaking || this.player.mode === "creative") {
+      this.breakSwingTime = 0;
+      return;
+    }
     const key = `${x},${y},${z}`;
     if (key !== this.breakKey) {
       this.breakKey = key;
@@ -809,12 +1056,109 @@ export class GameEngine {
     }
     const hardness = Math.max(0.1, getBlock(this.targetBlock).hardness);
     this.breakProgress += delta / (hardness * 0.42 + 0.16);
+    this.breakSwingTime += delta;
     this.breakSoundTimer -= delta;
     if (this.breakSoundTimer <= 0) {
-      audio.play("break", getBlock(this.targetBlock).name, { volume: 0.15, pitch: 0.9 });
+      audio.play("break", this.targetBlock, { volume: 0.15, pitch: 0.9 + this.breakProgress * 0.12 });
       this.breakSoundTimer = 0.15;
     }
     if (this.breakProgress >= 1) this.breakTarget();
+  }
+
+  private updateFieldOfView(delta: number): void {
+    const sprintTarget = this.screen === "playing" && this.sprinting && !this.reducedMotion ? 1 : 0;
+    this.sprintBlend = damp(this.sprintBlend, sprintTarget, sprintTarget > this.sprintBlend ? 7 : 9, delta);
+    const targetFov = this.settings.fov + this.sprintBlend * 4;
+    const nextFov = damp(this.camera.fov, targetFov, 10, delta);
+    if (Math.abs(nextFov - this.camera.fov) < 0.002) return;
+    this.camera.fov = nextFov;
+    this.camera.updateProjectionMatrix();
+  }
+
+  private updateCameraAnimation(delta: number): void {
+    const motionScale = this.reducedMotion ? 0 : 1;
+    this.damageImpulse = damp(this.damageImpulse, 0, 13, delta);
+    this.landingImpulse = damp(this.landingImpulse, 0, 9, delta);
+    const movement = THREE.MathUtils.clamp(this.movementAmount, 0, 1.2) * motionScale;
+    const bobY = Math.sin(this.bobTime) * 0.032 * movement;
+    const bobX = Math.cos(this.bobTime * 0.5) * 0.012 * movement;
+    const damageWave = Math.sin(this.elapsed * 39) * this.damageImpulse * motionScale;
+    this.camera.position.set(
+      this.player.x,
+      this.player.y + EYE_HEIGHT + bobY - this.landingImpulse * 0.075 * motionScale,
+      this.player.z,
+    );
+    this.camera.rotation.y = this.player.yaw;
+    this.camera.rotation.x = THREE.MathUtils.clamp(
+      this.player.pitch + Math.cos(this.bobTime * 0.5) * 0.008 * movement + damageWave * 0.012,
+      -Math.PI * 0.498,
+      Math.PI * 0.498,
+    );
+    this.camera.rotation.z = damageWave * 0.022;
+    this.camera.translateX(bobX + damageWave * 0.03);
+  }
+
+  private updateViewModel(delta: number): void {
+    this.breakActionTime = Math.max(0, this.breakActionTime - delta);
+    this.placeActionTime = Math.max(0, this.placeActionTime - delta);
+    this.heldSwapTime = Math.max(0, this.heldSwapTime - delta);
+    this.viewModel.visible = this.screen === "playing";
+    if (!this.viewModel.visible) return;
+
+    const motionScale = this.reducedMotion ? 0 : 1;
+    const miningPhase = (this.breakSwingTime * 3.8) % 1;
+    const miningSwing = this.breaking && this.target && this.player.mode !== "creative"
+      ? Math.sin(miningPhase * Math.PI)
+      : 0;
+    const breakProgress = 1 - this.breakActionTime / BREAK_ACTION_DURATION;
+    const breakSwing = this.breakActionTime > 0 ? Math.sin(breakProgress * Math.PI) : 0;
+    const swing = Math.max(miningSwing, breakSwing) * motionScale;
+    const placeProgress = 1 - this.placeActionTime / PLACE_ACTION_DURATION;
+    const placePush = this.placeActionTime > 0 ? Math.sin(placeProgress * Math.PI) * motionScale : 0;
+    const placeRebound = this.placeActionTime > 0 ? Math.sin(placeProgress * Math.PI * 2) * motionScale : 0;
+    const swapDrop = this.heldSwapTime > 0 ? this.heldSwapTime / 0.16 * motionScale : 0;
+    const movement = THREE.MathUtils.clamp(this.movementAmount, 0, 1.2) * motionScale;
+    const moveX = Math.cos(this.bobTime * 0.5) * 0.012 * movement;
+    const moveY = Math.sin(this.bobTime) * 0.014 * movement;
+    const halfViewWidth = Math.tan(THREE.MathUtils.degToRad(this.camera.fov * 0.5)) * 0.72 * this.camera.aspect;
+    const viewScale = THREE.MathUtils.clamp(halfViewWidth / 0.38, 0.42, 1);
+    const baseX = Math.min(0.43, halfViewWidth * 0.5);
+
+    this.heldBlock.scale.setScalar(viewScale);
+    this.heldBlock.position.set(
+      baseX + moveX * viewScale - swing * 0.045 * viewScale,
+      -0.35 + moveY - swing * 0.12 - swapDrop * 0.13 + placeRebound * 0.025,
+      -0.72 - placePush * 0.17,
+    );
+    this.heldBlock.rotation.set(
+      0.22 - swing * 0.92 + placePush * 0.18,
+      -0.52 + moveX * 1.8,
+      -0.08 + swing * 0.24 - placeRebound * 0.08,
+    );
+  }
+
+  private updateOutlineEffects(delta: number): void {
+    const selectionMaterial = this.selection.material as THREE.LineBasicMaterial;
+    if (this.selection.visible && this.screen === "playing") {
+      const progress = THREE.MathUtils.clamp(this.breakProgress, 0, 1);
+      const pulse = this.reducedMotion ? 0 : Math.sin(this.elapsed * (7 + progress * 9)) * (0.004 + progress * 0.009);
+      this.selection.scale.setScalar(1 + progress * 0.018 + pulse);
+      selectionMaterial.color.setHex(0xf4f5ec).lerp(this.selectionBreakColor, progress);
+      selectionMaterial.opacity = 0.74 + progress * 0.24;
+    } else if (this.screen !== "playing") {
+      this.selection.visible = false;
+    }
+
+    this.placementPulseTime = Math.max(0, this.placementPulseTime - delta);
+    if (this.placementPulseTime <= 0) {
+      this.placementOutline.visible = false;
+      return;
+    }
+    const progress = 1 - this.placementPulseTime / PLACEMENT_PULSE_DURATION;
+    const eased = 1 - (1 - progress) * (1 - progress);
+    const placementMaterial = this.placementOutline.material as THREE.LineBasicMaterial;
+    placementMaterial.opacity = (1 - eased) * 0.92;
+    this.placementOutline.scale.setScalar(this.reducedMotion ? 1.012 : 1 + eased * 0.1);
   }
 
   private physicsStep(delta: number): void {
@@ -831,6 +1175,7 @@ export class GameEngine {
     const headBlock = this.world.getBlock(this.player.x, this.player.y + 1.5, this.player.z);
     const inWater = headBlock === BlockId.Water;
     const speed = crouching ? 2.1 : sprinting && this.player.hunger > 2 ? 6.1 : 4.35;
+    this.sprinting = sprinting && inputLength > 0.1 && this.player.hunger > 2 && this.onGround;
     const forwardX = -Math.sin(this.player.yaw);
     const forwardZ = -Math.cos(this.player.yaw);
     const rightX = Math.cos(this.player.yaw);
@@ -871,21 +1216,28 @@ export class GameEngine {
     if (!this.onGround) this.airbornePeak = Math.max(this.airbornePeak, this.player.y);
     if (result.collided.y) {
       if (this.velocity.y < 0 && this.onGround && !wasGrounded) {
+        const impactSpeed = -this.velocity.y;
         const fall = this.airbornePeak - this.player.y;
+        if (!this.reducedMotion && impactSpeed > 3.5) {
+          this.landingImpulse = Math.max(this.landingImpulse, THREE.MathUtils.clamp((impactSpeed - 3.5) / 16, 0.08, 0.65));
+        }
         if (fall > 4.2) this.damage(Math.ceil((fall - 3.5) * 1.4), "坠落伤害");
       }
       this.velocity.y = 0;
+      if (this.onGround) this.airbornePeak = this.player.y;
     }
     if (this.player.y < -8) this.damage(20, "坠入虚空");
 
     const distance = Math.hypot(this.player.x - beforeX, this.player.z - beforeZ);
+    const movementTarget = this.onGround ? THREE.MathUtils.clamp(distance / delta / 5.4, 0, 1.2) : 0;
+    this.movementAmount = damp(this.movementAmount, movementTarget, 11, delta);
     if (inputLength > 0.1) {
       this.bobTime += distance * (sprinting ? 3.4 : 2.7);
       this.stepDistance += distance;
       if (this.stepDistance > (sprinting ? 1.8 : 2.35) && this.onGround) {
         this.stepDistance = 0;
         const under = this.world.getBlock(this.player.x, this.player.y - 0.1, this.player.z);
-        audio.play("step", getBlock(under).name);
+        audio.play("step", under);
       }
       if (this.player.mode === "survival") {
         this.hungerDistance += distance * (sprinting ? 1.7 : 0.55);
@@ -902,13 +1254,13 @@ export class GameEngine {
     } else this.player.oxygen = Math.min(20, this.player.oxygen + delta * 5);
     if (this.player.hunger <= 0 && this.damageCooldown === 0) this.damage(1, "饥饿");
     if (this.player.hunger >= 18 && this.player.health < 20 && this.elapsed % 5 < delta) this.player.health = Math.min(20, this.player.health + 1);
-    this.positionCamera(inputLength > 0.1 && this.onGround ? Math.sin(this.bobTime) * 0.035 : 0);
   }
 
-  private positionCamera(bob = 0): void {
-    this.camera.position.set(this.player.x, this.player.y + EYE_HEIGHT + bob, this.player.z);
+  private positionCamera(): void {
+    this.camera.position.set(this.player.x, this.player.y + EYE_HEIGHT, this.player.z);
     this.camera.rotation.y = this.player.yaw;
-    this.camera.rotation.x = this.player.pitch + Math.cos(this.bobTime * 0.5) * Math.abs(bob) * 0.25;
+    this.camera.rotation.x = this.player.pitch;
+    this.camera.rotation.z = 0;
   }
 
   private updateSky(delta: number): void {
@@ -917,19 +1269,23 @@ export class GameEngine {
     const daylight = THREE.MathUtils.clamp(Math.sin(angle) * 1.35 + 0.08, 0.04, 1);
     const dusk = Math.max(0, 1 - Math.abs(Math.sin(angle)) * 4) * (Math.cos(angle) < 0 ? 1 : 0);
     this.nightAmount = 1 - daylight;
-    const sky = new THREE.Color().lerpColors(this.skyNight, this.skyDay, daylight).lerp(this.skyDusk, dusk * 0.48);
-    this.scene.background = sky;
+    this.skyCurrent
+      .lerpColors(this.skyNight, this.skyDay, daylight)
+      .lerp(this.skyDusk, dusk * 0.48)
+      .lerp(this.skyRain, this.weatherBlend * 0.38);
+    this.scene.background = this.skyCurrent;
     if (this.scene.fog instanceof THREE.Fog) {
-      this.scene.fog.color.copy(sky);
+      this.scene.fog.color.copy(this.skyCurrent);
       this.scene.fog.near = Math.max(17, this.settings.renderDistance * 8);
-      this.scene.fog.far = this.settings.renderDistance * 16 + (this.weather === "rain" ? 16 : 34);
+      this.scene.fog.far = this.settings.renderDistance * 16 + THREE.MathUtils.lerp(34, 16, this.weatherBlend);
     }
-    this.hemisphere.intensity = 0.17 + daylight * 0.88;
-    this.sunlight.intensity = 0.08 + daylight * 1.35;
-    this.sunlight.color.set(daylight < 0.35 ? 0xffa475 : 0xfff2d0);
+    this.hemisphere.intensity = (0.17 + daylight * 0.88) * (1 - this.weatherBlend * 0.22);
+    this.sunlight.intensity = (0.08 + daylight * 1.35) * (1 - this.weatherBlend * 0.42);
+    this.sunlight.color.set(daylight < 0.35 ? 0xffa475 : 0xfff2d0).lerp(this.rainLight, this.weatherBlend * 0.46);
     const radius = 82;
     this.sun.position.set(this.player.x + Math.cos(angle) * radius, Math.sin(angle) * radius, this.player.z + 18);
-    this.moon.position.copy(this.sun.position).multiplyScalar(-1).add(new THREE.Vector3(this.player.x * 2, 0, this.player.z * 2));
+    this.scratchVector.set(this.player.x * 2, 0, this.player.z * 2);
+    this.moon.position.copy(this.sun.position).multiplyScalar(-1).add(this.scratchVector);
     this.sun.visible = Math.sin(angle) > -0.1;
     this.moon.visible = Math.sin(angle) < 0.2;
     this.sunlight.position.copy(this.sun.position);
@@ -937,8 +1293,11 @@ export class GameEngine {
     const starMaterial = this.stars.material as THREE.PointsMaterial;
     starMaterial.opacity = THREE.MathUtils.smoothstep(this.nightAmount, 0.35, 0.85);
     this.stars.position.set(this.player.x, 0, this.player.z);
-    this.clouds.position.x += delta * (this.weather === "rain" ? 2.1 : 0.75);
+    const cloudMotion = this.reducedMotion ? 0.55 : 1;
+    this.clouds.position.x += delta * THREE.MathUtils.lerp(0.75, 2.1, this.weatherBlend) * cloudMotion;
     if (this.clouds.position.x > 60) this.clouds.position.x -= 120;
+    this.cloudMaterial.color.lerpColors(this.cloudClear, this.cloudRain, this.weatherBlend);
+    this.cloudMaterial.opacity = 0.74 + this.weatherBlend * 0.16;
     this.clouds.children.forEach((cloud) => { cloud.position.y = 30 + daylight * 4 + (cloud.userData.offsetY ?? 0); });
   }
 
@@ -953,11 +1312,18 @@ export class GameEngine {
         this.dirty = true;
       }
     }
-    this.rain.visible = this.weather === "rain";
+    const weatherTarget = this.weather === "rain" ? 1 : 0;
+    this.weatherBlend = damp(this.weatherBlend, weatherTarget, 0.55, delta);
+    if (Math.abs(this.weatherBlend - weatherTarget) < 0.001) this.weatherBlend = weatherTarget;
+    const rainMaterial = this.rain.material as THREE.PointsMaterial;
+    rainMaterial.opacity = this.weatherBlend * 0.62;
+    this.rain.visible = this.weatherBlend > 0.01;
     if (!this.rain.visible) return;
     const attribute = this.rain.geometry.getAttribute("position") as THREE.BufferAttribute;
+    const rainMotion = this.reducedMotion ? 0.48 : 1;
+    const rainSpeed = THREE.MathUtils.lerp(9, 24, this.weatherBlend) * rainMotion;
     for (let index = 0; index < attribute.count; index += 1) {
-      let y = attribute.getY(index) - delta * 24;
+      let y = attribute.getY(index) - delta * rainSpeed;
       if (y < 0) y += 32;
       attribute.setY(index, y);
     }
@@ -1013,6 +1379,7 @@ export class GameEngine {
     this.damageCooldown = Math.max(0, this.damageCooldown - delta);
     this.messageTimer = Math.max(0, this.messageTimer - delta);
     if (this.messageTimer === 0) this.message = "";
+    this.updateFieldOfView(delta);
 
     if (this.screen === "playing") {
       this.accumulator = Math.min(this.accumulator + delta, FIXED_STEP * 5);
@@ -1020,8 +1387,10 @@ export class GameEngine {
         this.physicsStep(FIXED_STEP);
         this.accumulator -= FIXED_STEP;
       }
+      this.updateCameraAnimation(delta);
       this.world?.update(delta, this.player.x, this.player.z);
-      this.mobs?.update(delta, this.elapsed, new THREE.Vector3(this.player.x, this.player.y, this.player.z), this.nightAmount);
+      this.scratchVector.set(this.player.x, this.player.y, this.player.z);
+      this.mobs?.update(delta, this.elapsed, this.scratchVector, this.nightAmount);
       this.updateTarget(delta);
       this.saveTimer += delta;
       if (this.dirty && this.saveTimer >= 5) {
@@ -1030,15 +1399,17 @@ export class GameEngine {
         this.dirty = false;
       }
     } else if (this.screen === "menu" && this.world) {
-      const center = new THREE.Vector3(this.player.x, this.world.surfaceHeight(this.player.x, this.player.z) + 5, this.player.z);
+      const center = this.scratchVector.set(this.player.x, this.world.surfaceHeight(this.player.x, this.player.z) + 5, this.player.z);
       const radius = 11;
       this.camera.position.set(center.x + Math.cos(this.elapsed * 0.055) * radius, center.y + 2.5, center.z + Math.sin(this.elapsed * 0.055) * radius);
       this.camera.lookAt(center);
       this.world.update(delta, this.player.x, this.player.z);
     }
 
-    this.updateSky(delta);
+    this.updateViewModel(delta);
+    this.updateOutlineEffects(delta);
     this.updateWeather(delta);
+    this.updateSky(delta);
     this.updateParticles(delta);
     this.updateHud();
     this.renderer.render(this.scene, this.camera);
@@ -1046,15 +1417,33 @@ export class GameEngine {
   };
 
   dispose(): void {
+    if (this.disposed) return;
     this.disposed = true;
+    this.loadRevision += 1;
     cancelAnimationFrame(this.animationFrame);
     if (this.config) this.events.onSave(this.snapshot());
     audio.stopAmbient();
     this.world?.dispose();
     this.mobs?.dispose();
+    for (const burst of this.particles) {
+      this.scene.remove(burst.group);
+      burst.group.children.forEach((child) => {
+        if (child instanceof THREE.Mesh) child.geometry.dispose();
+      });
+      burst.material.dispose();
+    }
+    this.particles.length = 0;
+    this.heldBlockGeometry.dispose();
+    this.heldBlockMaterial.dispose();
+    this.sun.geometry.dispose();
+    (this.sun.material as THREE.Material).dispose();
+    this.moon.geometry.dispose();
+    (this.moon.material as THREE.Material).dispose();
     this.atlas.dispose();
     this.selection.geometry.dispose();
     (this.selection.material as THREE.Material).dispose();
+    this.placementOutline.geometry.dispose();
+    (this.placementOutline.material as THREE.Material).dispose();
     this.stars.geometry.dispose();
     (this.stars.material as THREE.Material).dispose();
     this.rain.geometry.dispose();
@@ -1062,6 +1451,7 @@ export class GameEngine {
     this.clouds.traverse((object) => {
       if (object instanceof THREE.Mesh) object.geometry.dispose();
     });
+    this.cloudMaterial.dispose();
     this.renderer.dispose();
     window.removeEventListener("resize", this.resize);
     window.removeEventListener("keydown", this.keyDown);
@@ -1075,6 +1465,7 @@ export class GameEngine {
     this.canvas.removeEventListener("wheel", this.wheel);
     this.canvas.removeEventListener("contextmenu", this.contextMenu);
     this.canvas.removeEventListener("click", this.canvasClick);
+    this.motionQuery.removeEventListener("change", this.motionPreferenceChange);
     this.canvas.remove();
   }
 }

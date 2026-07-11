@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { ALL_BLOCKS, BLOCKS, BlockId, HOTBAR_BLOCKS, getBlock } from "./blocks";
+import { ALL_BLOCKS, BLOCKS, BlockId, HOTBAR_BLOCKS, MAX_BLOCK_ID, getBlock } from "./blocks";
 import { ATLAS_COLUMNS, ATLAS_ROWS, getTileUV } from "./textures";
 
 describe("block registry", () => {
   it("defines a contiguous, unique registry", () => {
-    expect(ALL_BLOCKS).toHaveLength(BlockId.Cactus + 1);
+    expect(ALL_BLOCKS).toHaveLength(MAX_BLOCK_ID + 1);
     expect(new Set(ALL_BLOCKS.map((block) => block.id)).size).toBe(ALL_BLOCKS.length);
-    for (let id = BlockId.Air; id <= BlockId.Cactus; id += 1) expect(BLOCKS[id as BlockId].id).toBe(id);
+    expect(new Set(ALL_BLOCKS.map((block) => block.name)).size).toBe(ALL_BLOCKS.length);
+    for (let id = BlockId.Air; id <= MAX_BLOCK_ID; id += 1) expect(BLOCKS[id as BlockId].id).toBe(id);
   });
 
   it("keeps air and water non-solid while construction blocks collide", () => {
@@ -14,6 +15,10 @@ describe("block registry", () => {
     expect(getBlock(BlockId.Water).solid).toBe(false);
     expect(getBlock(BlockId.Water).liquid).toBe(true);
     expect(getBlock(BlockId.Glass).transparent).toBe(true);
+    expect(getBlock(BlockId.BirchLeaves).renderLayer).toBe("cutout");
+    expect(getBlock(BlockId.Ice).renderLayer).toBe("translucent");
+    expect(getBlock(BlockId.AmberLamp).emissive).toBe(true);
+    expect(getBlock(BlockId.CrystalBlock).emissive).toBe(true);
     expect(getBlock(BlockId.Stone).solid).toBe(true);
   });
 

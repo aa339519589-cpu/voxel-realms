@@ -7,7 +7,7 @@ import {
 
 export const TILE_SIZE = 16;
 export const ATLAS_COLUMNS = 8;
-export const ATLAS_ROWS = 3;
+export const ATLAS_ROWS = 7;
 export const ATLAS_WIDTH = TILE_SIZE * ATLAS_COLUMNS;
 export const ATLAS_HEIGHT = TILE_SIZE * ATLAS_ROWS;
 
@@ -36,6 +36,35 @@ export enum TileId {
   Basalt = 20,
   CactusSide = 21,
   CactusTop = 22,
+  Gravel = 23,
+  Limestone = 24,
+  Marble = 25,
+  GoldOre = 26,
+  BirchLogTop = 27,
+  BirchLogSide = 28,
+  BirchLeaves = 29,
+  BirchPlanks = 30,
+  StoneBricks = 31,
+  MossyCobblestone = 32,
+  PolishedBasalt = 33,
+  CutCopper = 34,
+  Terracotta = 35,
+  Bookshelf = 36,
+  AmberLamp = 37,
+  Ice = 38,
+  TintedGlass = 39,
+  SandstoneTop = 40,
+  SandstoneSide = 41,
+  CoalBlock = 42,
+  IronBlock = 43,
+  CopperBlock = 44,
+  GoldBlock = 45,
+  CrystalOre = 46,
+  CrystalBlock = 47,
+  SpruceLogTop = 48,
+  SpruceLogSide = 49,
+  SpruceLeaves = 50,
+  SprucePlanks = 51,
 }
 
 export interface AtlasUV {
@@ -323,6 +352,177 @@ function paintCactus(context: PixelContext): void {
   context.fillRect(topX + 7, topY + 7, 2, 2);
 }
 
+function paintVeinedStone(
+  context: PixelContext,
+  tile: TileId,
+  palette: Palette,
+  vein: string,
+  seed: number,
+): void {
+  noiseTile(context, tile, palette, seed);
+  const [originX, originY] = tileOrigin(tile);
+  for (let path = 0; path < 3; path += 1) {
+    let x = Math.floor(hash(path, 1, seed + 1) * TILE_SIZE);
+    for (let y = -2; y < TILE_SIZE + 2; y += 1) {
+      if (hash(path, y, seed + 2) > 0.56) x += hash(path, y, seed + 3) > 0.5 ? 1 : -1;
+      paintPixel(context, originX, originY, (x + TILE_SIZE) % TILE_SIZE, Math.max(0, Math.min(15, y)), vein);
+    }
+  }
+}
+
+function paintLogVariant(
+  context: PixelContext,
+  top: TileId,
+  side: TileId,
+  topPalette: Palette,
+  sidePalette: Palette,
+  ring: string,
+  stripe: string,
+  seed: number,
+): void {
+  noiseTile(context, top, topPalette, seed);
+  const [topX, topY] = tileOrigin(top);
+  context.strokeStyle = ring;
+  context.strokeRect(topX + 2.5, topY + 2.5, 11, 11);
+  context.strokeRect(topX + 5.5, topY + 5.5, 5, 5);
+  context.fillStyle = ring;
+  context.fillRect(topX + 7, topY + 7, 2, 2);
+
+  noiseTile(context, side, sidePalette, seed + 1);
+  const [sideX, sideY] = tileOrigin(side);
+  for (let x = 1; x < TILE_SIZE; x += 4) {
+    context.fillStyle = stripe;
+    context.fillRect(sideX + x, sideY, 1, TILE_SIZE);
+  }
+  for (let mark = 0; mark < 8; mark += 1) {
+    const x = Math.floor(hash(mark, 4, seed + 2) * 13);
+    const y = Math.floor(hash(mark, 8, seed + 3) * 15);
+    context.fillRect(sideX + x, sideY + y, 2 + (mark % 3), 1);
+  }
+}
+
+function paintLeafVariant(context: PixelContext, tile: TileId, palette: Palette, seed: number, needles = false): void {
+  const [originX, originY] = tileOrigin(tile);
+  for (let y = 0; y < TILE_SIZE; y += 1) {
+    for (let x = 0; x < TILE_SIZE; x += 1) {
+      const value = hash(x, y, seed);
+      const gap = needles ? (x + y * 2) % 7 === 0 : value < 0.1;
+      const color = gap ? "rgba(0,0,0,0)" : palette[Math.floor(value * palette.length) % palette.length];
+      paintPixel(context, originX, originY, x, y, color);
+    }
+  }
+  context.fillStyle = palette[0];
+  if (needles) {
+    for (let y = 2; y < TILE_SIZE; y += 4) context.fillRect(originX + 1, originY + y, 14, 1);
+  } else {
+    context.fillRect(originX + 4, originY + 2, 1, 11);
+    context.fillRect(originX + 10, originY + 5, 1, 8);
+  }
+}
+
+function paintBoards(context: PixelContext, tile: TileId, palette: Palette, seam: string, seed: number): void {
+  noiseTile(context, tile, palette, seed);
+  const [originX, originY] = tileOrigin(tile);
+  for (let y = 3; y < TILE_SIZE; y += 4) {
+    context.fillStyle = seam;
+    context.fillRect(originX, originY + y, TILE_SIZE, 1);
+  }
+  for (let row = 0; row < 4; row += 1) {
+    const x = (row * 5 + 3) % 15;
+    context.fillRect(originX + x, originY + row * 4, 1, 4);
+  }
+}
+
+function paintMasonry(context: PixelContext, tile: TileId, palette: Palette, mortar: string, seed: number): void {
+  noiseTile(context, tile, palette, seed);
+  const [originX, originY] = tileOrigin(tile);
+  context.fillStyle = mortar;
+  for (let y = 3; y < TILE_SIZE; y += 4) context.fillRect(originX, originY + y, TILE_SIZE, 1);
+  for (let row = 0; row < 4; row += 1) {
+    const offset = row % 2 === 0 ? 4 : 8;
+    context.fillRect(originX + offset, originY + row * 4, 1, 4);
+    if (offset + 8 < TILE_SIZE) context.fillRect(originX + offset + 8, originY + row * 4, 1, 4);
+  }
+}
+
+function paintMetalPanel(context: PixelContext, tile: TileId, palette: Palette, seam: string, seed: number): void {
+  noiseTile(context, tile, palette, seed);
+  const [originX, originY] = tileOrigin(tile);
+  context.strokeStyle = seam;
+  context.strokeRect(originX + 0.5, originY + 0.5, 15, 15);
+  context.strokeRect(originX + 3.5, originY + 3.5, 9, 9);
+  context.fillStyle = "rgba(255,255,255,.25)";
+  context.fillRect(originX + 3, originY + 2, 8, 1);
+  context.fillRect(originX + 2, originY + 3, 1, 7);
+}
+
+function paintBookshelf(context: PixelContext): void {
+  const tile = TileId.Bookshelf;
+  const [originX, originY] = tileOrigin(tile);
+  context.fillStyle = "#765034";
+  context.fillRect(originX, originY, TILE_SIZE, TILE_SIZE);
+  const books = ["#b54c43", "#d4a64f", "#4d7f74", "#657ab1", "#875b91", "#c36b45"] as const;
+  for (let shelf = 0; shelf < 2; shelf += 1) {
+    const baseline = shelf * 8 + 6;
+    let x = 1;
+    while (x < 15) {
+      const width = 1 + Math.floor(hash(x, shelf, 301) * 3);
+      const height = 4 + Math.floor(hash(x, shelf, 302) * 3);
+      context.fillStyle = books[(x + shelf * 3) % books.length];
+      context.fillRect(originX + x, originY + baseline - height, width, height);
+      x += width + 1;
+    }
+    context.fillStyle = "#4f3426";
+    context.fillRect(originX, originY + baseline + 1, TILE_SIZE, 2);
+  }
+}
+
+function paintLamp(context: PixelContext): void {
+  const [originX, originY] = tileOrigin(TileId.AmberLamp);
+  context.fillStyle = "#4a2f20";
+  context.fillRect(originX, originY, TILE_SIZE, TILE_SIZE);
+  context.fillStyle = "#8f5b2d";
+  context.fillRect(originX + 2, originY + 2, 12, 12);
+  context.fillStyle = "#f3b84e";
+  context.fillRect(originX + 4, originY + 4, 8, 8);
+  context.fillStyle = "#fff0a3";
+  context.fillRect(originX + 6, originY + 5, 4, 6);
+  context.fillStyle = "#5c3923";
+  context.fillRect(originX + 7, originY, 2, 4);
+  context.fillRect(originX + 7, originY + 12, 2, 4);
+  context.fillRect(originX, originY + 7, 4, 2);
+  context.fillRect(originX + 12, originY + 7, 4, 2);
+}
+
+function paintGlassVariant(context: PixelContext, tile: TileId, fill: string, edge: string, seed: number): void {
+  const [originX, originY] = tileOrigin(tile);
+  context.fillStyle = fill;
+  context.fillRect(originX, originY, TILE_SIZE, TILE_SIZE);
+  context.strokeStyle = edge;
+  context.strokeRect(originX + 0.5, originY + 0.5, 15, 15);
+  context.fillStyle = edge;
+  for (let mark = 0; mark < 6; mark += 1) {
+    const x = 2 + Math.floor(hash(mark, 2, seed) * 11);
+    const y = 2 + Math.floor(hash(mark, 5, seed + 1) * 11);
+    context.fillRect(originX + x, originY + y, mark % 2 ? 1 : 3, 1);
+  }
+}
+
+function paintCrystal(context: PixelContext): void {
+  paintOre(context, TileId.CrystalOre, 331, ["#58d7d1", "#c9fff1"]);
+  const [originX, originY] = tileOrigin(TileId.CrystalBlock);
+  context.fillStyle = "#164b57";
+  context.fillRect(originX, originY, TILE_SIZE, TILE_SIZE);
+  for (let x = 0; x < TILE_SIZE; x += 1) {
+    for (let y = 0; y < TILE_SIZE; y += 1) {
+      const distance = Math.abs(x - 7.5) + Math.abs(y - 7.5);
+      if (distance < 4 || (x + y) % 9 === 0) {
+        paintPixel(context, originX, originY, x, y, distance < 2.5 ? "#e4fff2" : "#4ed4c7");
+      }
+    }
+  }
+}
+
 function drawAtlas(context: PixelContext): void {
   context.clearRect(0, 0, ATLAS_WIDTH, ATLAS_HEIGHT);
   context.imageSmoothingEnabled = false;
@@ -346,6 +546,44 @@ function drawAtlas(context: PixelContext): void {
   noiseTile(context, TileId.Clay, ["#8799a6", "#91a4af", "#7b8c99", "#a0afb6"], 112);
   paintBasalt(context);
   paintCactus(context);
+  noiseTile(context, TileId.Gravel, ["#77756f", "#8a867d", "#62645f", "#a29a8c"], 141);
+  paintVeinedStone(context, TileId.Limestone, ["#bbb8a5", "#cbc7b3", "#aaa895", "#d8d2bb"], "#929383", 142);
+  paintVeinedStone(context, TileId.Marble, ["#d8d9d5", "#ecece4", "#c4c9c7", "#f5f3e8"], "#8d9aa1", 143);
+  paintOre(context, TileId.GoldOre, 144, ["#e4b849", "#ffdc66"]);
+  paintLogVariant(context, TileId.BirchLogTop, TileId.BirchLogSide, ["#e5d3a4", "#d3bd8c", "#f1dfb4"], ["#d8d4bd", "#eee9d2", "#c9c5ad"], "#9b8055", "#443d35", 151);
+  paintLeafVariant(context, TileId.BirchLeaves, ["#355f38", "#4f7b45", "#6b934f", "#2d5235"], 153);
+  paintBoards(context, TileId.BirchPlanks, ["#d4b878", "#e2c98c", "#c5a666", "#efd69b"], "#9f8050", 154);
+  paintMasonry(context, TileId.StoneBricks, ["#697278", "#788087", "#5f686e"], "#3f484e", 161);
+  paintMasonry(context, TileId.MossyCobblestone, ["#626b65", "#727c70", "#555f59"], "#3f4a43", 162);
+  {
+    const [x, y] = tileOrigin(TileId.MossyCobblestone);
+    context.fillStyle = "#4f7042";
+    context.fillRect(x + 1, y + 1, 6, 2);
+    context.fillRect(x + 10, y + 5, 4, 3);
+    context.fillRect(x + 4, y + 12, 7, 2);
+  }
+  paintMetalPanel(context, TileId.PolishedBasalt, ["#30343b", "#40454c", "#252a31"], "#646a70", 163);
+  paintMetalPanel(context, TileId.CutCopper, ["#a95d3f", "#bd704b", "#8f4d38", "#5d8e75"], "#6f3f32", 164);
+  noiseTile(context, TileId.Terracotta, ["#a75f48", "#b96b50", "#914f3d", "#c47a5c"], 165);
+  paintBookshelf(context);
+  paintLamp(context);
+  paintGlassVariant(context, TileId.Ice, "rgba(167,220,229,.35)", "rgba(226,252,250,.86)", 171);
+  paintGlassVariant(context, TileId.TintedGlass, "rgba(39,54,72,.58)", "rgba(119,153,172,.72)", 173);
+  noiseTile(context, TileId.SandstoneTop, ["#d5be78", "#e2cb86", "#c7ad69", "#efd998"], 181);
+  noiseTile(context, TileId.SandstoneSide, ["#d2ba76", "#dec582", "#c6aa67"], 182);
+  {
+    const [x, y] = tileOrigin(TileId.SandstoneSide);
+    context.fillStyle = "#b99c5d";
+    for (let row = 3; row < TILE_SIZE; row += 4) context.fillRect(x, y + row, TILE_SIZE, 1);
+  }
+  paintMetalPanel(context, TileId.CoalBlock, ["#202429", "#2c3136", "#171b1f"], "#444a50", 191);
+  paintMetalPanel(context, TileId.IronBlock, ["#aeb5b7", "#c4c9c7", "#919a9e"], "#737d82", 192);
+  paintMetalPanel(context, TileId.CopperBlock, ["#a85f43", "#c37451", "#8f4f3a"], "#6f4033", 193);
+  paintMetalPanel(context, TileId.GoldBlock, ["#d5a72e", "#efc64d", "#bd8e22"], "#8b671d", 194);
+  paintCrystal(context);
+  paintLogVariant(context, TileId.SpruceLogTop, TileId.SpruceLogSide, ["#8b6740", "#a27a49", "#785733"], ["#493a2d", "#594432", "#3e332a"], "#5d422a", "#2b261f", 201);
+  paintLeafVariant(context, TileId.SpruceLeaves, ["#1f4b3b", "#2b5d47", "#376b4e", "#183d33"], 203, true);
+  paintBoards(context, TileId.SprucePlanks, ["#6d5238", "#7c5d3e", "#5e4733", "#886746"], "#493629", 204);
 }
 
 /**

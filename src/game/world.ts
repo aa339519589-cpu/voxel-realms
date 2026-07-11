@@ -29,6 +29,8 @@ interface Face {
   texture: "top" | "side" | "bottom";
 }
 
+type TreeSpecies = "oak" | "birch" | "spruce";
+
 const FACES: Face[] = [
   { normal: [1, 0, 0], vertices: [[1, 0, 1], [1, 0, 0], [1, 1, 0], [1, 1, 1]], shade: 0.82, texture: "side" },
   { normal: [-1, 0, 0], vertices: [[0, 0, 0], [0, 0, 1], [0, 1, 1], [0, 1, 0]], shade: 0.72, texture: "side" },
@@ -73,10 +75,12 @@ export class VoxelWorld {
   private readonly detail2D: ReturnType<typeof createNoise2D>;
   private readonly biome2D: ReturnType<typeof createNoise2D>;
   private readonly cave3D: ReturnType<typeof createNoise3D>;
+  private readonly geology3D: ReturnType<typeof createNoise3D>;
   private readonly seedValue: number;
   private readonly surfaceCache = new Map<string, number>();
   private readonly biomeCache = new Map<string, "plains" | "forest" | "desert" | "alpine">();
   private readonly opaqueMaterial: THREE.MeshLambertMaterial;
+  private readonly cutoutMaterial: THREE.MeshLambertMaterial;
   private readonly transparentMaterial: THREE.MeshLambertMaterial;
   private updateTimer = 0;
   private renderDistance = 3;
@@ -85,6 +89,7 @@ export class VoxelWorld {
     private readonly scene: THREE.Scene,
     readonly seed: string,
     atlas: THREE.CanvasTexture,
+    readonly generatorVersion = 1,
     private readonly onPatch?: (key: string, block: BlockId) => void,
   ) {
     this.seedValue = seedNumber(seed);
@@ -93,7 +98,15 @@ export class VoxelWorld {
     this.detail2D = createNoise2D(random);
     this.biome2D = createNoise2D(random);
     this.cave3D = createNoise3D(random);
+    this.geology3D = createNoise3D(random);
     this.opaqueMaterial = new THREE.MeshLambertMaterial({ map: atlas, vertexColors: true, alphaTest: 0.12 });
+    this.cutoutMaterial = new THREE.MeshLambertMaterial({
+      map: atlas,
+      vertexColors: true,
+      alphaTest: 0.42,
+      side: THREE.DoubleSide,
+      depthWrite: true,
+    });
     this.transparentMaterial = new THREE.MeshLambertMaterial({
       map: atlas,
       vertexColors: true,
@@ -106,7 +119,12 @@ export class VoxelWorld {
   }
 
   setRenderDistance(distance: number): void {
-    this.renderDistance = Math.max(2, Math.min(6, Math.round(distance)));
+    const next = Math.max(2, Math.min(6, Math.round(distance)));
+    if (next === this.renderDistance) return;
+    this.renderDistance = next;
+    this.queue.length = 0;
+    this.queued.clear();
+    this.updateTimer = 0;
   }
 
   get loadedChunks(): number {
@@ -159,9 +177,20 @@ export class VoxelWorld {
 
   private isTreeAnchor(x: number, z: number): boolean {
     const biome = this.biomeAt(x, z);
-    if (biome !== "forest" && biome !== "plains") return false;
-    const frequency = biome === "forest" ? 31 : 83;
+    if (this.generatorVersion < 2 && biome !== "forest" && biome !== "plains") return false;
+    if (this.generatorVersion >= 2 && biome !== "forest" && biome !== "plains" && biome !== "alpine") return false;
+    const frequency = biome === "forest" ? 31 : biome === "alpine" ? 59 : 83;
     return hashCoordinates(x, 47, z, this.seedValue) % frequency === 0 && this.surfaceHeight(x, z) > SEA_LEVEL + 1;
+  }
+
+  private treeSpeciesAt(x: number, z: number): TreeSpecies {
+    if (this.generatorVersion < 2) return "oak";
+    const biome = this.biomeAt(x, z);
+    if (biome === "alpine") return "spruce";
+    const roll = hashCoordinates(x, 149, z, this.seedValue) % 10;
+    if (biome === "forest" && roll < 3) return "spruce";
+    if (roll < 6) return "birch";
+    return "oak";
   }
 
   private featureBlock(x: number, y: number, z: number): BlockId {
@@ -177,23 +206,39 @@ export class VoxelWorld {
       const perimeter = Math.abs(ruinDx) === 3 || Math.abs(ruinDz) === 3;
       const doorway = ruinDz === -3 && Math.abs(ruinDx) <= 1 && level <= 2;
       const weatheredGap = hashCoordinates(x, y, z, this.seedValue) % 13 === 0;
-      if (level === 1 && (perimeter || (Math.abs(ruinDx) === 1 && Math.abs(ruinDz) === 1))) return BlockId.Cobblestone;
-      if (level >= 2 && level <= 3 && perimeter && !doorway && !weatheredGap) return level === 3 && (ruinDx + ruinDz) % 2 === 0 ? BlockId.Brick : BlockId.Cobblestone;
-      if (level === 2 && ruinDx === 0 && ruinDz === 0) return BlockId.Glow;
-      if (level === 4 && Math.abs(ruinDx) === 3 && Math.abs(ruinDz) === 3) return BlockId.Basalt;
+      if (level === 1 && (perimeter || (Math.abs(ruinDx) === 1 && Math.abs(ruinDz) === 1))) {
+        return this.generatorVersion >= 2 && (ruinDx + ruinDz) % 3 === 0 ? BlockId.MossyCobblestone : BlockId.Cobblestone;
+      }
+      if (level >= 2 && level <= 3 && perimeter && !doorway && !weatheredGap) {
+        if (this.generatorVersion >= 2) return level === 3 && (ruinDx + ruinDz) % 2 === 0 ? BlockId.Brick : BlockId.StoneBricks;
+        return level === 3 && (ruinDx + ruinDz) % 2 === 0 ? BlockId.Brick : BlockId.Cobblestone;
+      }
+      if (level === 2 && ruinDx === 0 && ruinDz === 0) return this.generatorVersion >= 2 ? BlockId.AmberLamp : BlockId.Glow;
+      if (level === 4 && Math.abs(ruinDx) === 3 && Math.abs(ruinDz) === 3) return this.generatorVersion >= 2 ? BlockId.PolishedBasalt : BlockId.Basalt;
     }
     for (let anchorX = x - 2; anchorX <= x + 2; anchorX += 1) {
       for (let anchorZ = z - 2; anchorZ <= z + 2; anchorZ += 1) {
         if (!this.isTreeAnchor(anchorX, anchorZ)) continue;
         const root = this.surfaceHeight(anchorX, anchorZ);
-        const trunkHeight = 4 + (hashCoordinates(anchorX, 5, anchorZ, this.seedValue) % 2);
-        if (x === anchorX && z === anchorZ && y > root && y <= root + trunkHeight) return BlockId.OakLog;
+        const species = this.treeSpeciesAt(anchorX, anchorZ);
+        const trunkHeight = (species === "spruce" ? 5 : 4) + (hashCoordinates(anchorX, 5, anchorZ, this.seedValue) % 2);
+        const log = species === "birch" ? BlockId.BirchLog : species === "spruce" ? BlockId.SpruceLog : BlockId.OakLog;
+        const leaves = species === "birch" ? BlockId.BirchLeaves : species === "spruce" ? BlockId.SpruceLeaves : BlockId.OakLeaves;
+        if (x === anchorX && z === anchorZ && y > root && y <= root + trunkHeight) return log;
         const dx = Math.abs(x - anchorX);
         const dz = Math.abs(z - anchorZ);
+        if (species === "spruce") {
+          const canopyLevel = y - (root + 2);
+          if (canopyLevel >= 0 && canopyLevel <= trunkHeight) {
+            const radius = canopyLevel >= trunkHeight - 1 ? 1 : canopyLevel % 2 === 0 ? 2 : 1;
+            if (dx <= radius && dz <= radius && !(dx === radius && dz === radius)) return leaves;
+          }
+          continue;
+        }
         const dy = y - (root + trunkHeight - 1);
         if (dy >= 0 && dy <= 2) {
           const radius = dy === 2 ? 1 : 2;
-          if (dx <= radius && dz <= radius && !(dx === radius && dz === radius && dy > 0)) return BlockId.OakLeaves;
+          if (dx <= radius && dz <= radius && !(dx === radius && dz === radius && dy > 0)) return leaves;
         }
       }
     }
@@ -210,7 +255,12 @@ export class VoxelWorld {
     if (y > surface) {
       const feature = this.featureBlock(x, y, z);
       if (feature !== BlockId.Air) return feature;
-      return y <= SEA_LEVEL ? BlockId.Water : BlockId.Air;
+      if (y <= SEA_LEVEL) {
+        return this.generatorVersion >= 2 && this.biomeAt(x, z) === "alpine" && y === SEA_LEVEL
+          ? BlockId.Ice
+          : BlockId.Water;
+      }
+      return BlockId.Air;
     }
     const biome = this.biomeAt(x, z);
     if (y > 2 && y < surface - 3) {
@@ -219,16 +269,36 @@ export class VoxelWorld {
       if (cave > 0.7 && tunnel > 0.2) return y <= SEA_LEVEL - 2 ? BlockId.Water : BlockId.Air;
     }
     if (y === surface) {
-      if (biome === "desert" || surface <= SEA_LEVEL + 1) return BlockId.Sand;
+      if (biome === "desert" || surface <= SEA_LEVEL + 1) {
+        if (this.generatorVersion >= 2 && biome !== "desert" && hashCoordinates(x, 211, z, this.seedValue) % 5 === 0) return BlockId.Gravel;
+        return BlockId.Sand;
+      }
       if (biome === "alpine" && surface > 17) return BlockId.Snow;
       return BlockId.Grass;
     }
-    if (y >= surface - 3) return biome === "desert" ? BlockId.Sand : BlockId.Dirt;
+    if (y >= surface - 3) {
+      if (this.generatorVersion >= 2) {
+        if (biome === "desert") return y <= surface - 2 ? BlockId.Sandstone : BlockId.Sand;
+        if (biome === "alpine" && surface > 17 && y === surface - 1) return BlockId.Ice;
+        if (surface <= SEA_LEVEL + 2 && y >= surface - 1 && hashCoordinates(x, y, z, this.seedValue) % 6 === 0) return BlockId.Clay;
+        if (surface <= SEA_LEVEL + 1 && hashCoordinates(x, y, z, this.seedValue) % 4 === 0) return BlockId.Gravel;
+      }
+      return biome === "desert" ? BlockId.Sand : BlockId.Dirt;
+    }
     const oreRoll = hashCoordinates(x, y, z, this.seedValue) % 997;
     if (y < 13 && oreRoll < 11) return BlockId.IronOre;
     if (y < 20 && oreRoll >= 11 && oreRoll < 30) return BlockId.CoalOre;
     if (y < 24 && oreRoll >= 30 && oreRoll < 40) return BlockId.CopperOre;
+    if (this.generatorVersion >= 2 && y < 10 && oreRoll >= 40 && oreRoll < 44) return BlockId.GoldOre;
+    if (this.generatorVersion >= 2 && y < 7 && oreRoll === 44) return BlockId.CrystalOre;
     if (y < 6 && oreRoll === 63) return BlockId.Glow;
+    if (this.generatorVersion >= 2) {
+      if (biome === "desert" && y > surface - 7) return BlockId.Terracotta;
+      const geology = this.geology3D(x * 0.047, y * 0.071, z * 0.047);
+      if (y < 7 && geology > 0.72) return BlockId.Basalt;
+      if (geology > 0.61) return BlockId.Marble;
+      if (geology < -0.59) return BlockId.Limestone;
+    }
     return BlockId.Stone;
   }
 
@@ -305,7 +375,8 @@ export class VoxelWorld {
     const group = new THREE.Group();
     group.name = `chunk:${cx},${cz}`;
     const opaque = buffers();
-    const transparent = buffers();
+    const cutout = buffers();
+    const translucent = buffers();
     const startX = cx * CHUNK_SIZE;
     const startZ = cz * CHUNK_SIZE;
     for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
@@ -316,7 +387,11 @@ export class VoxelWorld {
           const block = this.getBlock(x, y, z);
           if (block === BlockId.Air) continue;
           const definition = getBlock(block);
-          const target = definition.transparent || definition.liquid ? transparent : opaque;
+          const target = definition.renderLayer === "cutout"
+            ? cutout
+            : definition.renderLayer === "translucent"
+              ? translucent
+              : opaque;
           for (const face of FACES) {
             const neighbor = this.getBlock(x + face.normal[0], y + face.normal[1], z + face.normal[2]);
             if (this.shouldRenderFace(block, neighbor)) this.emitFace(target, x, y, z, block, face);
@@ -331,8 +406,15 @@ export class VoxelWorld {
       mesh.frustumCulled = true;
       group.add(mesh);
     }
-    if (transparent.indices.length) {
-      const mesh = new THREE.Mesh(this.geometryFrom(transparent), this.transparentMaterial);
+    if (cutout.indices.length) {
+      const mesh = new THREE.Mesh(this.geometryFrom(cutout), this.cutoutMaterial);
+      mesh.receiveShadow = true;
+      mesh.castShadow = false;
+      mesh.frustumCulled = true;
+      group.add(mesh);
+    }
+    if (translucent.indices.length) {
+      const mesh = new THREE.Mesh(this.geometryFrom(translucent), this.transparentMaterial);
       mesh.renderOrder = 2;
       mesh.frustumCulled = true;
       group.add(mesh);
@@ -368,6 +450,17 @@ export class VoxelWorld {
   private queueAround(x: number, z: number): void {
     const centerX = floorDiv(Math.floor(x), CHUNK_SIZE);
     const centerZ = floorDiv(Math.floor(z), CHUNK_SIZE);
+    for (let index = this.queue.length - 1; index >= 0; index -= 1) {
+      const entry = this.queue[index];
+      const dx = entry.cx - centerX;
+      const dz = entry.cz - centerZ;
+      if (Math.abs(dx) <= this.renderDistance && Math.abs(dz) <= this.renderDistance) {
+        entry.distance = dx * dx + dz * dz;
+        continue;
+      }
+      this.queued.delete(chunkKey(entry.cx, entry.cz));
+      this.queue.splice(index, 1);
+    }
     for (let dx = -this.renderDistance; dx <= this.renderDistance; dx += 1) {
       for (let dz = -this.renderDistance; dz <= this.renderDistance; dz += 1) {
         const cx = centerX + dx;
@@ -425,6 +518,7 @@ export class VoxelWorld {
     this.surfaceCache.clear();
     this.biomeCache.clear();
     this.opaqueMaterial.dispose();
+    this.cutoutMaterial.dispose();
     this.transparentMaterial.dispose();
   }
 }

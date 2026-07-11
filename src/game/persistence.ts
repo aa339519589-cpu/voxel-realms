@@ -6,7 +6,7 @@ import {
   type StoreNames,
 } from "idb";
 import { BlockId, isBlockId } from "./blocks";
-import { createDefaultHotbar } from "./inventory";
+import { BACKPACK_SIZE, createDefaultHotbar, createEmptyBackpack } from "./inventory";
 import {
   DEFAULT_SETTINGS,
   type GameSettings,
@@ -15,7 +15,7 @@ import {
   type WorldConfig,
 } from "./types";
 
-export const WORLD_DATA_SCHEMA_VERSION = 2;
+export const WORLD_DATA_SCHEMA_VERSION = 3;
 
 const DATABASE_NAME = "voxel-realms-worlds";
 const DATABASE_VERSION = 3;
@@ -482,6 +482,7 @@ function defaultRuntimePlayer(mode: GameMode = "survival", spawn: Vector3Tuple =
     oxygen: 20,
     selectedSlot: 0,
     hotbar: createDefaultHotbar(mode),
+    backpack: createEmptyBackpack(),
     mode,
     flying: mode === "creative",
   };
@@ -506,12 +507,35 @@ function normalizeRuntimeHotbar(raw: unknown, mode: GameMode, issues: DataIssue[
   });
 }
 
+function normalizeRuntimeBackpack(raw: unknown, issues?: DataIssue[], path = "player.backpack"): RuntimePlayerState["backpack"] {
+  const fallback = createEmptyBackpack();
+  const input = Array.isArray(raw) ? raw : [];
+  if (raw !== undefined && input.length !== BACKPACK_SIZE) {
+    issues?.push({ level: "warning", path, message: `Backpack was repaired to ${BACKPACK_SIZE} slots.`, repaired: true });
+  }
+  return fallback.map((fallbackSlot, index) => {
+    const slot = input[index];
+    if (!isRecord(slot)) return { ...fallbackSlot };
+    const count = integer(slot.count, 0, 0, 999);
+    if (count === 0) return { ...fallbackSlot };
+    if (typeof slot.block !== "number" || !isBlockId(slot.block) || slot.block === BlockId.Air) {
+      issues?.push({ level: "warning", path: `${path}[${index}]`, message: "Invalid backpack slot was emptied.", repaired: true });
+      return { ...fallbackSlot };
+    }
+    return { block: slot.block, count };
+  });
+}
+
 function normalizeRuntimePlayer(raw: unknown, mode: GameMode, spawn: Vector3Tuple, issues?: DataIssue[]): RuntimePlayerState {
   const source = isRecord(raw) ? raw : {};
   const fallback = defaultRuntimePlayer(mode, spawn);
   const hotbar = normalizeRuntimeHotbar(source.hotbar, mode, issues, "player.hotbar");
+  const backpack = normalizeRuntimeBackpack(source.backpack, issues);
   const survivalHotbar = mode === "creative" && Array.isArray(source.survivalHotbar)
     ? normalizeRuntimeHotbar(source.survivalHotbar, "survival", issues, "player.survivalHotbar")
+    : undefined;
+  const survivalBackpack = mode === "creative" && Array.isArray(source.survivalBackpack)
+    ? normalizeRuntimeBackpack(source.survivalBackpack, issues, "player.survivalBackpack")
     : undefined;
   return {
     x: boundedNumber(source.x, fallback.x, -MAX_WORLD_COORDINATE, MAX_WORLD_COORDINATE),
@@ -524,7 +548,9 @@ function normalizeRuntimePlayer(raw: unknown, mode: GameMode, spawn: Vector3Tupl
     oxygen: boundedNumber(source.oxygen, fallback.oxygen, 0, 20),
     selectedSlot: integer(source.selectedSlot, fallback.selectedSlot, 0, 8),
     hotbar,
+    backpack,
     survivalHotbar,
+    survivalBackpack,
     mode,
     flying: mode === "creative" ? booleanValue(source.flying, true) : false,
   };
@@ -548,6 +574,7 @@ function normalizeWorldConfig(raw: unknown, issues?: DataIssue[]): WorldConfig |
       ? raw.seed.trim().slice(0, 128)
       : String(integer(raw.seed, randomSeed(), -0x80000000, 0x7fffffff)),
     mode: raw.mode === "creative" ? "creative" : "survival",
+    generatorVersion: integer(raw.generatorVersion, DEFAULT_GENERATOR_VERSION, 1, 9999),
     createdAt: timestamp(raw.createdAt, now),
     updatedAt: timestamp(raw.updatedAt, now),
   };
@@ -822,6 +849,7 @@ async function saveRuntimeWorld(input: WorldSave): Promise<WorldSave> {
     createdAt: clean.config.createdAt,
     updatedAt: clean.config.updatedAt,
     lastPlayedAt: clean.config.updatedAt,
+    generatorVersion: clean.config.generatorVersion,
   };
   const player = normalizePlayer({
     position: [clean.player.x, clean.player.y, clean.player.z],
@@ -829,14 +857,17 @@ async function saveRuntimeWorld(input: WorldSave): Promise<WorldSave> {
     health: clean.player.health,
     hunger: clean.player.hunger,
     selectedSlot: clean.player.selectedSlot,
-    inventory: clean.player.hotbar.map((slot) => ({ blockId: slot.block, count: slot.count })),
+    inventory: [...clean.player.hotbar, ...clean.player.backpack]
+      .filter((slot) => slot.count > 0 && slot.block !== BlockId.Air)
+      .map((slot) => ({ blockId: slot.block, count: slot.count })),
     gameMode: clean.player.mode,
   }, id, meta.spawn);
-  const settings = createDefaultWorldSettings(id);
   const patches = runtimePatchesToArray(id, clean.patches);
   try {
     const database = await getDatabase();
     const transaction = database.transaction(["worlds", "players", "settings", "patches"], "readwrite", { durability: "strict" });
+    const settingsStore = transaction.objectStore("settings");
+    const settings = normalizeSettings(await settingsStore.get(id), id);
     await deleteWorldPatches(transaction.objectStore("patches"), id);
     await Promise.all([
       transaction.objectStore("worlds").put({
@@ -846,7 +877,7 @@ async function saveRuntimeWorld(input: WorldSave): Promise<WorldSave> {
         weather: clean.weather,
       }),
       transaction.objectStore("players").put({ ...storedPlayer(player), runtimePlayer: clean.player }),
-      transaction.objectStore("settings").put(storedSettings(settings)),
+      settingsStore.put(storedSettings(settings)),
       ...patches.map((patch) => transaction.objectStore("patches").put(storedPatch(patch))),
     ]);
     await transaction.done;
@@ -881,6 +912,7 @@ export async function loadWorld(worldId: string): Promise<WorldSave | null> {
       name: meta.name,
       seed: String(meta.seed),
       mode: playerRecord?.runtimePlayer?.mode === "creative" ? "creative" : "survival",
+      generatorVersion: meta.generatorVersion,
       createdAt: meta.createdAt,
       updatedAt: meta.updatedAt,
     };
@@ -898,6 +930,10 @@ export async function loadWorld(worldId: string): Promise<WorldSave | null> {
       hotbar: persistedPlayer.inventory
         .filter((slot) => isBlockId(slot.blockId))
         .slice(0, 9)
+        .map((slot) => ({ block: slot.blockId as BlockId, count: slot.count })),
+      backpack: persistedPlayer.inventory
+        .filter((slot) => isBlockId(slot.blockId))
+        .slice(9, 9 + BACKPACK_SIZE)
         .map((slot) => ({ block: slot.blockId as BlockId, count: slot.count })),
       mode: persistedPlayer.gameMode,
       flying: false,
@@ -933,6 +969,7 @@ export async function listWorlds(): Promise<WorldConfig[]> {
           name: meta.name,
           seed: String(meta.seed),
           mode: "survival",
+          generatorVersion: meta.generatorVersion,
           createdAt: meta.createdAt,
           updatedAt: meta.updatedAt,
         }] : [];

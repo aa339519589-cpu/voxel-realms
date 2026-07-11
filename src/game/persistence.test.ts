@@ -10,13 +10,16 @@ import {
   listWorlds,
   loadSettings,
   loadWorld,
+  loadWorldSnapshot,
   saveSettings,
   saveWorld,
+  saveWorldSettings,
   type WorldSave,
 } from "./persistence";
 import { DEFAULT_SETTINGS } from "./types";
 
 const worldId = `test-world-${Date.now()}`;
+const settingsWorldId = `${worldId}-settings`;
 
 const fixture: WorldSave = {
   schemaVersion: WORLD_DATA_SCHEMA_VERSION,
@@ -25,6 +28,7 @@ const fixture: WorldSave = {
     name: "Persistence Test",
     seed: "TEST-SEED-42",
     mode: "survival",
+    generatorVersion: 2,
     createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_000_100,
   },
@@ -39,6 +43,9 @@ const fixture: WorldSave = {
     oxygen: 20,
     selectedSlot: 2,
     hotbar: [{ block: BlockId.Grass, count: 7 }],
+    backpack: Array.from({ length: 27 }, (_, index) => index === 0
+      ? { block: BlockId.GoldOre, count: 5 }
+      : { block: BlockId.Air, count: 0 }),
     mode: "survival",
     flying: false,
   },
@@ -51,6 +58,7 @@ const fixture: WorldSave = {
 };
 
 afterAll(async () => {
+  await deleteWorld(settingsWorldId);
   await deleteWorld(worldId);
   await closeWorldDatabase();
 });
@@ -65,6 +73,39 @@ describe("world persistence", () => {
     expect(loaded?.patches["-16,9,32"]).toBe(BlockId.Brick);
     expect(loaded?.weather).toBe("rain");
     expect(loaded?.player.hotbar).toHaveLength(9);
+    expect(loaded?.player.backpack).toHaveLength(27);
+    expect(loaded?.player.backpack[0]).toEqual({ block: BlockId.GoldOre, count: 5 });
+    expect(loaded?.config.generatorVersion).toBe(2);
+  });
+
+  it("preserves existing world settings during runtime saves", async () => {
+    const settingsFixture = {
+      ...fixture,
+      config: { ...fixture.config, id: settingsWorldId },
+    };
+    await saveWorld(settingsFixture);
+    const expectedSettings = await saveWorldSettings(settingsWorldId, {
+      renderDistance: 11,
+      fieldOfView: 96,
+      mouseSensitivity: 1.37,
+      masterVolume: 0.21,
+      effectsVolume: 0.32,
+      ambientVolume: 0.43,
+      showFps: true,
+      invertY: true,
+      reducedMotion: true,
+      updatedAt: 1_700_000_000_200,
+    });
+
+    await saveWorld({
+      ...settingsFixture,
+      player: { ...settingsFixture.player, x: 4.5 },
+      timeOfDay: 0.18,
+      weather: "clear",
+    });
+
+    const snapshot = await loadWorldSnapshot(settingsWorldId);
+    expect(snapshot?.settings).toEqual(expectedSettings);
   });
 
   it("preserves creative infinite stacks and repairs missing slots", async () => {
