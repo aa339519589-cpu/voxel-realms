@@ -1,0 +1,15 @@
+{
+  "name": "sakura-floating-garden",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "vite": "^6.1.0"
+  }
+}
