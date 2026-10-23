@@ -8,8 +8,8 @@
 <style>
 :root{--panel:rgba(9,21,32,.78);--border:rgba(195,221,235,.18);--ink:#f1f6f6;--muted:#aec2cf;--accent:#8fe1d1;--highlight:#fbd2a1}
 *{box-sizing:border-box} html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b2131;font-family:Inter,-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif;color:var(--ink);touch-action:none}
-canvas.webgl{position:fixed;inset:0;display:block;touch-action:none;outline:none}
-#vignette{position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 54% 47%,transparent 40%,rgba(1,15,27,.19) 100%)}
+canvas.webgl{z-index:0;position:fixed;inset:0;display:block;touch-action:none;outline:none}
+#vignette{z-index:1;position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 54% 47%,transparent 40%,rgba(1,15,27,.19) 100%)}
 #hud{position:fixed;inset:0;pointer-events:none;z-index:2}#hud button,#hud input,#hud select,#hud label{pointer-events:auto}
 .glass{background:var(--panel);border:1px solid var(--border);box-shadow:0 8px 38px rgba(0,0,0,.15);backdrop-filter:blur(17px);-webkit-backdrop-filter:blur(17px)}
 #mast{position:absolute;top:max(18px,env(safe-area-inset-top));left:22px;padding:18px 19px 16px;border-radius:17px;min-width:284px}
@@ -69,7 +69,7 @@ select.pillControl{appearance:none;background-image:url('data:image/svg+xml,%3Cs
 <section id="mast" class="glass"><div class="eyebrow">PROCEDURAL WORLD · 01 <span class="online"><i></i>LIVE</span></div><div class="brand">STRATA<span> / 10</span></div><div class="small">十域浮空岛 · 活体地理生态模拟</div></section>
 <section id="biomes" class="glass"><div class="panelHead"><span>生态区导航</span><span>10 / 10</span></div><div class="biomeGrid" id="biomeButtons"></div></section>
 <section id="stats" class="glass"><div class="readout"><label>当前生态区</label><strong id="currentBiome">俯瞰全岛</strong></div><div class="readout"><label>地表海拔</label><strong id="altitude">—</strong></div><div class="readout"><label>实时帧率</label><strong id="fps">— FPS</strong></div><div class="readout"><label>绘制调用</label><strong id="draws">—</strong></div><div class="readout"><label>活跃动物</label><strong id="animals">—</strong></div><div class="readout"><label>区域天气</label><strong id="weather">—</strong></div></section>
-<section id="clockbox" class="glass"><div class="timeTitle"><div class="timeValue"><span id="timeReadout">07:20</span><small id="dateReadout">春季 · 第 01 天 · 晴</small></div><button id="pauseBtn" class="play" title="暂停/继续时间" aria-label="暂停/继续时间">Ⅱ</button></div><input type="range" id="timeSlider" min="0" max="1439" value="440" step="1" aria-label="一天中的时间"/><div class="sliderCaption"><span>00:00 夜</span><span>06:00 黎明</span><span>12:00 正午</span><span>18:00 日落</span><span>24:00</span></div><div class="rowControls"><select class="pillControl" id="seasonSelect" aria-label="季节"><option value="0">春 季</option><option value="1">夏 季</option><option value="2">秋 季</option><option value="3">冬 季</option><option value="4">自动季节</option></select><select class="pillControl" id="speedSelect" aria-label="时间速度"><option value="0">0× 时间</option><option value="1">1× 时间</option><option value="30">30× 时间</option><option value="120">120× 时间</option><option value="360" selected>360× 时间</option></select><select class="pillControl" id="qualitySelect" aria-label="画质"><option value="auto">自动画质</option><option value="low">流畅</option><option value="high">精细</option></select><button class="pillControl" id="homeBtn" title="返回全岛">◎ 全岛</button></div></section>
+<section id="clockbox" class="glass"><div class="timeTitle"><div class="timeValue"><span id="timeReadout">11:30</span><small id="dateReadout">春季 · 第 01 天 · 晴</small></div><button id="pauseBtn" class="play" title="暂停/继续时间" aria-label="暂停/继续时间">Ⅱ</button></div><input type="range" id="timeSlider" min="0" max="1439" value="690" step="1" aria-label="一天中的时间"/><div class="sliderCaption"><span>00:00 夜</span><span>06:00 黎明</span><span>12:00 正午</span><span>18:00 日落</span><span>24:00</span></div><div class="rowControls"><select class="pillControl" id="seasonSelect" aria-label="季节"><option value="0">春 季</option><option value="1">夏 季</option><option value="2">秋 季</option><option value="3">冬 季</option><option value="4">自动季节</option></select><select class="pillControl" id="speedSelect" aria-label="时间速度"><option value="0">0× 时间</option><option value="1">1× 时间</option><option value="30">30× 时间</option><option value="120">120× 时间</option><option value="360" selected>360× 时间</option></select><select class="pillControl" id="qualitySelect" aria-label="画质"><option value="auto">自动画质</option><option value="low">流畅</option><option value="high">精细</option></select><button class="pillControl" id="homeBtn" title="返回全岛">◎ 全岛</button></div></section>
 <section id="minimap" class="glass"><div class="miniTitle"><span>WORLD MAP</span><span>N ↑</span></div><canvas id="mapcanvas" width="310" height="256"></canvas></section>
 <div id="instruction">拖动视角 · 滚轮推进 · WASD 移动 · 空格 / Shift 升降</div><div id="toast"></div>
 <div id="touch"><div class="dpad"><button class="empty" aria-hidden="true"></button><button data-move="forward">▲</button><button class="empty" aria-hidden="true"></button><button data-move="left">◀</button><button data-move="back">▼</button><button data-move="right">▶</button><button class="empty" aria-hidden="true"></button><button data-move="down">−</button><button class="empty" aria-hidden="true"></button></div><div class="vertical"><button data-move="up">↑</button><button data-move="down">↓</button></div></div>
@@ -77,6 +77,7 @@ select.pillControl{appearance:none;background-image:url('data:image/svg+xml,%3Cs
 <script>
 (function(){
  const sources=[
+  './three.min.js',
   'https://cdn.bootcdn.net/ajax/libs/three.js/0.152.2/three.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/three.js/0.152.2/three.min.js',
   'https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js',
@@ -527,8 +528,8 @@ window.beginStrata = function(){
   particleSystems.find(p=>p.mesh.material===particleMats.petal).mesh.visible=next!==3;
   EL('dateReadout').textContent=seasonNames[next]+' · 第 01 天';
  }
- let minutes=440,days=1,paused=false,clockSpeed=360,elapsed=0,frameCounter=0,frameTimer=0,wasFPS=60,fpsAccum=0,visibilityStart=performance.now();
- const SKY_DAY=new THREE.Color(0xa3c6dd),SKY_DUSK=new THREE.Color(0xf1a88c),SKY_NIGHT=new THREE.Color(0x101c38);
+ let minutes=690,days=1,paused=false,clockSpeed=360,elapsed=0,frameCounter=0,frameTimer=0,wasFPS=60,fpsAccum=0,visibilityStart=performance.now();
+ const SKY_DAY=new THREE.Color(0xa3c6dd),SKY_DUSK=new THREE.Color(0xf1a88c),SKY_NIGHT=new THREE.Color(0x263954);
  const sunColorDay=new THREE.Color(0xfff0cf),sunColorSet=new THREE.Color(0xff9c61);
 const lightning=new THREE.PointLight(0xb4d5ff,0,100);lightning.position.set(-51,88,44);world.add(lightning);
  function weatherState(id){
@@ -545,7 +546,7 @@ const lightning=new THREE.PointLight(0xb4d5ff,0,100);lightning.position.set(-51,
   sun.position.set(190*Math.cos(a),Math.max(-150,190*solar),120*Math.sin(a));sun.target.position.set(0,17,0);
   sun.intensity=3.1*day;sun.color.copy(sunColorSet).lerp(sunColorDay,smooth(.06,.75,solar));
   moonlight.position.set(-sun.position.x,Math.max(50,-sun.position.y),-sun.position.z);
-  moonlight.intensity=.16+(.38*(1-day));hemi.intensity=.35+1.28*day;
+  moonlight.intensity=.70+(1.25*(1-day));hemi.intensity=.85+1.10*day;
   sunSphere.position.copy(sun.position).normalize().multiplyScalar(430);sunSphere.position.y+=17;
   moonSphere.position.copy(sun.position).normalize().multiplyScalar(-430);moonSphere.position.y+=17;
   sunSphere.visible=solar>-.2;moonSphere.visible=solar<.15;
@@ -558,7 +559,7 @@ const lightning=new THREE.PointLight(0xb4d5ff,0,100);lightning.position.set(-51,
   lightning.intensity=rainCycle>.9&&nearest==='rain'&&Math.sin(elapsed*17)>0.98?16:0;
   const dusk=1-Math.abs(solar),duskMix=smooth(.27,.02,Math.abs(solar))*.85;
   scene.background.copy(SKY_NIGHT).lerp(SKY_DAY,day).lerp(SKY_DUSK,duskMix*day);
-  scene.fog.color.copy(scene.background);scene.fog.density=(day>.5?.0018:.0026)+(nearest==='swamp'?.0022:nearest==='rain'?.0008:0);
+  scene.fog.color.copy(scene.background);scene.fog.density=(day>.5?.0013:.0015)+(nearest==='swamp'?.0015:nearest==='rain'?.0007:0);
   waterMat.uniforms.uNight.value=1-day;
   for(const b of beacons)if(b.light)b.light.intensity=day<.35?3:0;
   fireflies.mesh.visible=day<.52;
@@ -568,7 +569,7 @@ const lightning=new THREE.PointLight(0xb4d5ff,0,100);lightning.position.set(-51,
  const btnroot=EL('biomeButtons');const buttons={};
  for(const b of BIOMES){const button=document.createElement('button');button.className='biome';button.style.setProperty('--biome-color','#'+b.color.toString(16).padStart(6,'0'));
   button.innerHTML='<span class="bullet"></span><span>'+b.label+'</span>';button.addEventListener('click',()=>goBiome(b.id));btnroot.appendChild(button);buttons[b.id]=button;}
- const homePosition=new THREE.Vector3(MOBILE?170:104,MOBILE?207:156,MOBILE?438:262);
+ const homePosition=new THREE.Vector3(MOBILE?110:104,MOBILE?150:156,MOBILE?285:262);
  if(MOBILE)camera.fov=68; camera.updateProjectionMatrix();
  camera.position.copy(homePosition);camera.lookAt(0,23,0);camera.rotation.order='YXZ';
  ({x:pitch,y:yaw}=new THREE.Euler().setFromQuaternion(camera.quaternion,'YXZ'));
@@ -656,7 +657,7 @@ const lightning=new THREE.PointLight(0xb4d5ff,0,100);lightning.position.set(-51,
   d.mesh.position.set(lerp(a.x,b.x,t),lerp(a.y,b.y,t)+.4,lerp(a.z,b.z,t));d.mesh.scale.x=1+.21*Math.sin(elapsed*4+i);
  }steamBoost=Math.max(0,steamBoost-dt*.25);steam.mesh.material.opacity=clamp(.6+steamBoost*.2,.55,.95)}
  let prev=performance.now(),raf=0,mapTick=0,detailTick=0,autoQualityFrame=0;
- function animate(now){if(!alive)return;raf=requestAnimationFrame(animate);
+ function animate(now){if(!alive)return;raf=requestAnimationFrame(animate);try{
   const dt=Math.min(.06,Math.max(.001,(now-prev)/1000));prev=now;elapsed+=dt;frameCounter++;fpsAccum+=dt;
   if(!paused&&clockSpeed>0){minutes+=dt*clockSpeed/60;if(minutes>=1440){const d=Math.floor(minutes/1440);minutes%=1440;days+=d;if(seasonMode==='auto')applySeason(Math.floor((days-1)/28)%4)}}
   if(tween){tween.age+=dt;let s=smooth(0,1,clamp(tween.age/tween.duration,0,1));camera.position.copy(tween.from).lerp(tween.to,s);camera.quaternion.copy(tween.q0).slerp(tween.q1,s);
@@ -684,6 +685,7 @@ const lightning=new THREE.PointLight(0xb4d5ff,0,100);lightning.position.set(-51,
    EL('dateReadout').textContent=seasonNames[seasonIndex]+' · 第 '+String(days).padStart(2,'0')+' 天 · '+weatherState(b.id);
    EL('timeSlider').value=Math.floor(minutes);detailTick=0;
   }
+ }catch(error){alive=false;cancelAnimationFrame(raf);console.error('STRATA frame loop error',error);EL('loadscreen').style.display='flex';EL('loadscreen').classList.remove('hidden');EL('loadtext').textContent='场景运行失败：'+error.message;EL('retry').style.display='inline-block';}
  }
  addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight)});
  document.addEventListener('visibilitychange',()=>{prev=performance.now()});
