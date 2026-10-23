@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#2a2150">
+<title>体素日式花园 · 夕阳浮岛</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #2a2150; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+  canvas { display: block; touch-action: none; }
+  #title { position: fixed; left: 18px; top: 14px; color: #fff3e6; text-shadow: 0 2px 10px rgba(80,20,60,.55); pointer-events: none; user-select: none; }
+  #title h1 { margin: 0; font-size: 20px; letter-spacing: .12em; font-weight: 600; }
+  #title p { margin: 4px 0 0; font-size: 12px; opacity: .8; letter-spacing: .08em; }
+  #ui { position: fixed; left: 0; right: 0; bottom: 14px; display: flex; justify-content: center; align-items: center; gap: 10px; pointer-events: none; padding: 0 10px; box-sizing: border-box; }
+  #hint { color: #fff3e6; font-size: 12px; background: rgba(60,25,70,.38); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); padding: 8px 14px; border-radius: 999px; letter-spacing: .04em; text-align:center; }
+  #rot { pointer-events: auto; cursor: pointer; border: 0; color: #fff3e6; font-size: 12px; background: rgba(255,140,110,.45); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); padding: 8px 14px; border-radius: 999px; font-family: inherit; white-space: nowrap; }
+  #rot:hover { background: rgba(255,140,110,.65); }
+  #loading { position: fixed; z-index: 5; inset: 0; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 18px; color: #ffe9d6; background: #2a2150; font-size: 14px; letter-spacing: .14em; transition: opacity .8s; text-align:center; padding: 20px; box-sizing:border-box; }
+  #loading.hide { opacity: 0; pointer-events: none; }
+  #loading-error { max-width: 440px; font-size: 13px; letter-spacing: 0; line-height:1.8; color: #ffdfda; display:none; }
+  @media (max-width: 480px) { #title h1 {font-size: 17px} #hint {font-size: 11px; padding:8px 10px} #rot {font-size: 11px; padding:8px 10px} }
+</style>
+</head>
+<body>
+<div id="loading"><div id="loading-message">正在加载浮岛庭园…</div><div id="loading-error"></div></div>
+<div id="title"><h1>桜 · 浮岛庭园</h1><p>VOXEL JAPANESE GARDEN</p></div>
+<div id="ui">
+  <div id="hint">拖动旋转 · 滚轮/双指缩放 · 右键平移</div>
+  <button id="rot" type="button">自动旋转：开</button>
+</div>
+<script>
+  // 网络或 WebGL 不可用时展示诊断信息，避免持续停留在加载画面。
+  window.showGardenError = function(message) {
+    var e = document.getElementById('loading-error');
+    var title = document.getElementById('loading-message');
+    if (title) title.textContent = '预览未能启动';
+    if (e) {
+      e.style.display = 'block';
+      e.textContent = (message || '请使用最新版 Chrome、Edge 或 Safari，确保联网后重试。') + ' 请使用支持 WebGL 的浏览器，或关闭浏览器省电模式后重试。';
+    }
+  };
+  window.addEventListener('error', function(e){
+    if (!document.getElementById('loading')?.classList.contains('hide')) window.showGardenError(e.message);
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    if (!document.getElementById('loading')?.classList.contains('hide')) window.showGardenError(String(e.reason));
+  });
+  setTimeout(function(){
+    if (!document.getElementById('loading')?.classList.contains('hide')) window.showGardenError('3D 场景启动超时，请刷新页面或换一个浏览器。');
+  }, 18000);
+</script>
+<script type="module" src="./src.js"></script>
+</body>
+</html>
