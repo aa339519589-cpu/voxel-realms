@@ -8,6 +8,10 @@ const { chromium } = require('playwright');
   await page.waitForTimeout(9000);
   const state=await page.evaluate(()=>({loaded:document.getElementById('loadscreen')?.className,loadtext:document.getElementById('loadtext')?.textContent,loadDisplay:document.getElementById('loadscreen')?.style.display,canvas:!!document.querySelector('canvas.webgl'),size:document.querySelector('canvas.webgl')?.getBoundingClientRect().toJSON(),fps:document.getElementById('fps')?.textContent,draws:document.getElementById('draws')?.textContent,animals:document.getElementById('animals')?.textContent,time:document.getElementById('timeReadout')?.textContent,webgl:!!document.querySelector('canvas.webgl')?.getContext('webgl2')}));
   await page.screenshot({path:'/tmp/strata-'+mode+'.png'});
+  await page.evaluate(()=>{const slider=document.getElementById('timeSlider');slider.value='0';slider.dispatchEvent(new Event('input',{bubbles:true}));});
+  await page.waitForTimeout(1100);
+  await page.screenshot({path:'/tmp/strata-'+mode+'-night.png'});
+  console.log('STRATA_'+mode.toUpperCase()+'_NIGHT',JSON.stringify(await page.evaluate(()=>({time:document.getElementById('timeReadout')?.textContent,fps:document.getElementById('fps')?.textContent,draws:document.getElementById('draws')?.textContent,load:document.getElementById('loadscreen')?.style.display}))));
   console.log('STRATA_'+mode.toUpperCase()+'_STATE',JSON.stringify(state));console.log('STRATA_'+mode.toUpperCase()+'_ERRORS',JSON.stringify(faults.slice(0,20)));await page.close();
  }
  await browser.close();
