@@ -1,0 +1,208 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><meta name="theme-color" content="#f6cbbb"><title>夕樱浮岛 · Sakura Garden</title>
+<style>
+:root{color-scheme:light;--ink:#343b38;--muted:#7b766e;--panel:rgba(255,250,240,.78);--line:rgba(76,70,61,.15)}
+*{box-sizing:border-box}html,body{height:100%;width:100%;margin:0;overflow:hidden}body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","PingFang SC","Noto Sans CJK SC",sans-serif;color:var(--ink);background:radial-gradient(ellipse at 72% 20%,#fff0bd 0%,#f9d9b6 33%,#ebbbc0 72%,#be9eb4 100%);user-select:none;-webkit-user-select:none}
+body.night{--ink:#f5e7df;--muted:#c7b8c4;--panel:rgba(54,48,70,.77);--line:rgba(255,250,240,.17);background:radial-gradient(ellipse at 72% 18%,#998da8 0%,#67627c 40%,#343951 100%)}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none;cursor:grab;outline:0}canvas:active{cursor:grabbing}
+#sun{position:fixed;width:min(24vw,235px);aspect-ratio:1;left:67%;top:13%;border-radius:50%;background:radial-gradient(circle,#fff6d9 0%,#ffdcac 43%,rgba(255,219,175,.01) 73%);box-shadow:0 0 75px 32px rgba(255,217,152,.27);pointer-events:none}body.night #sun{background:radial-gradient(circle,#f1eaff 0%,#dcd9f2 43%,rgba(224,205,242,0) 75%);box-shadow:0 0 85px 18px rgba(174,181,249,.14)}
+.halo{position:fixed;pointer-events:none;inset:0;background:linear-gradient(180deg,rgba(255,249,234,.16) 0%,transparent 54%,rgba(100,53,73,.10) 100%)}
+.ui{position:fixed;z-index:5;inset:0;padding:clamp(18px,3.5vw,48px);pointer-events:none;display:flex;flex-direction:column;justify-content:space-between}
+header,.foot{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.brand{pointer-events:auto}.eyebrow{letter-spacing:.38em;font-size:10px;font-weight:700;color:#a25861;display:flex;align-items:center;gap:9px;text-transform:uppercase}.eyebrow:before{content:"";width:22px;height:1px;background:currentColor}.title{font-size:clamp(28px,4.4vw,51px);font-weight:500;line-height:1.2;letter-spacing:.12em;margin-top:18px;font-family:Georgia,"Songti SC","STSong",serif}.sub{color:var(--muted);font:italic 12px Georgia,serif;letter-spacing:.075em;margin-top:9px}
+.controls{pointer-events:auto;display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;max-width:520px}.pill{appearance:none;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:50px;padding:10px 14px;font-size:11px;font-weight:600;letter-spacing:.04em;backdrop-filter:blur(15px);-webkit-backdrop-filter:blur(15px);cursor:pointer;transition:transform .2s,border-color .2s;white-space:nowrap}.pill:active{transform:scale(.95)}.pill.on{border-color:rgba(172,86,81,.5)}.pill.on::before{content:"";display:inline-block;width:6px;height:6px;background:#bd716d;border-radius:100%;margin-right:7px;vertical-align:2px}
+.foot{align-items:flex-end}.instruction{font-size:11px;line-height:1.9;color:var(--muted);letter-spacing:.035em;background:var(--panel);padding:11px 15px;border:1px solid var(--line);border-radius:14px;backdrop-filter:blur(10px)}.caption{text-align:right;font-family:Georgia,serif;font-size:11px;color:var(--muted);line-height:1.8;letter-spacing:.075em}
+#problem{display:none;position:fixed;z-index:8;top:50%;left:50%;transform:translate(-50%,-50%);width:min(85vw,420px);padding:27px;background:#fffaf5;color:#423e3d;border-radius:15px;line-height:1.8;text-align:center;box-shadow:0 16px 80px #0002}
+@media(max-width:620px){.ui{padding:21px 19px 22px}.title{font-size:31px;margin-top:14px}.sub{font-size:10px}.controls{position:absolute;right:17px;top:107px;max-width:230px}.pill{font-size:10px;padding:9px 11px}.instruction{font-size:10px;padding:9px 11px}.caption{font-size:9px}.eyebrow{font-size:9px}.foot{gap:10px}}
+@media(max-width:360px){.caption{display:none}.controls{max-width:190px}}
+</style></head><body><div id="sun"></div><div class="halo"></div><canvas id="view" aria-label="交互式三维樱花庭园；拖动以旋转，双指缩放"></canvas>
+<div class="ui"><header><div class="brand"><div class="eyebrow">A GARDEN IN THE SKY</div><div class="title">夕樱浮岛</div><div class="sub">Sakura Garden · Spring at Dusk</div></div><div class="controls"><button class="pill on" id="orbit">自动巡游</button><button class="pill on" id="petals">落樱</button><button class="pill" id="time">月夜</button><button class="pill" id="reset">重置视角</button></div></header><div class="foot"><div class="instruction">拖动旋转 · 双指缩放<br>轻触按钮切换景色</div><div class="caption">五重塔 · 鸟居 · 樱花 · 锦鲤池<br>AN INTERACTIVE VOXEL DIORAMA</div></div></div><div id="problem"></div>
+<script>
+(()=>{'use strict';
+const canvas=document.getElementById('view'),gl=canvas.getContext('webgl2',{alpha:true,antialias:true,depth:true,powerPreference:'high-performance'}),problem=document.getElementById('problem');
+const vs=`#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPosition;
+layout(location=1) in vec3 aNormal;
+layout(location=2) in vec3 aColor;
+uniform mat4 uViewProj,uLightViewProj;
+out vec3 vColor,vNormal,vWorld;
+out vec4 vLightPos;
+void main(){vec4 world=vec4(aPosition,1.);gl_Position=uViewProj*world;vLightPos=uLightViewProj*world;vColor=aColor;vNormal=aNormal;vWorld=aPosition;}`;
+const fs=`#version 300 es
+precision highp float;
+in vec3 vColor,vNormal,vWorld;in vec4 vLightPos;
+uniform sampler2D uShadow;uniform float uNight,uTime,uAlpha,uWater;
+out vec4 frag;
+void main(){
+ vec3 norm=normalize(vNormal);float diffuse=max(dot(norm,normalize(vec3(-.6,.8,.48))),.0);
+ vec3 pp=vLightPos.xyz/vLightPos.w;pp=pp*.5+.5;
+ float shade=0.;if(pp.x>.002&&pp.x<.998&&pp.y>.002&&pp.y<.998&&pp.z<1.){
+   float bias=max(.0009,.0024*(1.-diffuse));
+   for(int x=-1;x<=1;x++)for(int y=-1;y<=1;y++){float depth=texture(uShadow,pp.xy+vec2(float(x),float(y))/1024.).r;shade+=pp.z-bias>depth?1.:0.;}
+   shade/=9.;
+ }
+ vec3 sunColor=mix(vec3(1.05,.82,.66),vec3(.64,.72,1.05),uNight);
+ vec3 ambience=mix(vec3(.62,.66,.66),vec3(.40,.46,.63),uNight);
+ vec3 color=vColor*(ambience+sunColor*diffuse*(1.-shade*.76)*.7);
+ if(uWater>.5){float wave=sin(vWorld.x*5.+uTime*1.6)*sin(vWorld.z*6.-uTime*.8);color+=vec3(.08,.18,.18)*(wave*.5+.5);color=mix(color,vec3(.62,.83,.82),.1);}
+ frag=vec4(color,uAlpha);
+}`;
+const depthVs=`#version 300 es
+layout(location=0) in vec3 aPosition;
+uniform mat4 uLightViewProj;
+void main(){gl_Position=uLightViewProj*vec4(aPosition,1.);}`;
+const depthFs=`#version 300 es
+precision highp float;
+void main(){}`;
+const pointVs=`#version 300 es
+precision highp float;layout(location=0) in vec4 p;layout(location=1) in vec3 clr;
+uniform mat4 uViewProj;uniform float uTime,uSize;
+out vec3 vColor;
+void main(){float h=mod(p.y-uTime*(.23+fract(p.w*19.)*.29)+10.,9.);vec3 q=vec3(p.x+sin(uTime*.6+p.w*10.)*.6,h-.6,p.z+sin(uTime*.25+p.w*25.)*.4);gl_Position=uViewProj*vec4(q,1.);gl_PointSize=uSize*(.8+fract(p.w*17.));vColor=clr;}`;
+const pointFs=`#version 300 es
+precision mediump float;in vec3 vColor;out vec4 frag;
+void main(){vec2 uv=gl_PointCoord-.5;if(dot(uv,uv)>.19)discard;frag=vec4(vColor,.82);}`;
+function shader(type,source){let sh=gl.createShader(type);gl.shaderSource(sh,source);gl.compileShader(sh);if(!gl.getShaderParameter(sh,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(sh));return sh;}
+function program(v,f){const p=gl.createProgram();gl.attachShader(p,shader(gl.VERTEX_SHADER,v));gl.attachShader(p,shader(gl.FRAGMENT_SHADER,f));gl.linkProgram(p);if(!gl.getProgramParameter(p,gl.LINK_STATUS))throw Error(gl.getProgramInfoLog(p));return p;}
+let prog,shadowProg,petalProg; if(gl)try{prog=program(vs,fs);shadowProg=program(depthVs,depthFs);petalProg=program(pointVs,pointFs);}catch(e){problem.style.display='block';problem.textContent='着色器编译失败：'+e.message;return;}
+const rand=(()=>{let a=73412;return ()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296;}})();
+const rr=(a,b)=>a+(b-a)*rand(),pick=a=>a[Math.floor(rand()*a.length)];
+function rgb(h){const n=parseInt(h.replace('#',''),16);return[(n>>16&255)/255,(n>>8&255)/255,(n&255)/255];}
+const C={earth:'#826763',earth2:'#967768',grass:'#94ae79',grass2:'#a8bd86',sand:'#d6caa7',path:'#c9bfa8',stone:'#a2a19b',stone2:'#c9bcab',stone3:'#777d7a',roof:'#334b4c',roof2:'#49635c',red:'#ae3e3c',red2:'#d55648',wood:'#806052',wood2:'#ab8063',cream:'#f5e7c6',gold:'#d6ad6e',bark:'#735551',bark2:'#91655f',pink:'#e8a2b2',pink2:'#f7c5ca',pink3:'#d986a2',pink4:'#ffe4d4',leaves:'#7e9b75',lamp:'#ffe19d',water:'#4f9898',bed:'#497276'};
+const solid=[],water=[],fishVerts=[],fallbackBoxes=[];
+const F=[[[1,0,0],[[1,0,1],[1,1,1],[1,1,0],[1,0,0]]], [[-1,0,0],[[0,0,0],[0,1,0],[0,1,1],[0,0,1]]], [[0,1,0],[[0,1,0],[1,1,0],[1,1,1],[0,1,1]]],[[0,-1,0],[[0,0,1],[1,0,1],[1,0,0],[0,0,0]]],[[0,0,1],[[0,0,1],[0,1,1],[1,1,1],[1,0,1]]],[[0,0,-1],[[1,0,0],[1,1,0],[0,1,0],[0,0,0]]]];
+function cube(out,x,y,z,w,h,d,col,yaw=0){if(out===solid)fallbackBoxes.push([x,y,z,w,h,d,col,yaw]);let c=Array.isArray(col)?col:rgb(col);let cs=Math.cos(yaw),sn=Math.sin(yaw);for(const [n,face] of F){let pts=face.map(p=>{let xx=(p[0]-.5)*w,zz=(p[2]-.5)*d;return[x+xx*cs-zz*sn,y+(p[1]-.5)*h,z+xx*sn+zz*cs]});let nn=[n[0]*cs-n[2]*sn,n[1],n[0]*sn+n[2]*cs];for(const i of [0,1,2,0,2,3])out.push(...pts[i],...nn,...c);}}
+const box=(x,y,z,w,h,d,col,yaw=0)=>cube(solid,x,y,z,w,h,d,col,yaw);
+function topShape(x,z){const a=x/9.5,b=z/6.8,t=Math.atan2(b,a);return a*a+b*b<(.96+.045*Math.cos(t*5.5)+.025*Math.sin(t*10))**2}
+function pond(x,z){return((x-3.3)/2.9)**2+((z-2.1)/2)**2<1;}
+// Island: actual cube geometry, not flat sprite cards.
+for(let x=-9.4;x<=9.4;x+=.74)for(let z=-6.7;z<=6.7;z+=.74){if(!topShape(x,z))continue;
+let edge=1-Math.sqrt((x/9.5)**2+(z/6.8)**2),depth=Math.min(3.65,1.0+edge*4.8+rr(-.14,.14)),spans=Math.max(1,Math.floor(depth/.64));
+for(let j=0;j<spans;j++){const taper=j*.12;if(topShape(x+taper*(x>0?1:-1),z+taper*(z>0?1:-1)))box(x,-.36-j*.60,z,.745,.62,.745,pick([C.earth,C.earth2,'#786367','#a18270']));}
+if(!pond(x,z))box(x,.04,z,.75,.22,.75,pick([C.grass,C.grass2,'#a5b984','#86a771','#b4c690']));else box(x,-.23,z,.75,.13,.75,pick([C.bed,'#507f80']));}
+// Tiny mineral fringe; detached rocks under island.
+for(let i=0;i<42;i++){let a=rr(0,Math.PI*2),r=rr(.66,1.01),x=Math.cos(a)*8.9*r,z=Math.sin(a)*6.2*r,y=rr(-4.15,-1.7);box(x,y,z,rr(.25,.58),rr(.25,.78),rr(.25,.62),pick(['#92756d','#806967','#ae8870']));}
+// Garden path stones.
+for(let i=0;i<16;i++){let x=-1.6+i*.39,z=-1.7+Math.sin(i*.4)*.25;box(x,.20,z,.39,.13,.41,pick([C.path,'#aab0a0',C.stone2]),rr(-.4,.4));}
+for(let i=0;i<26;i++){let x=rr(-9,9),z=rr(-6.3,6.3);if(!topShape(x,z)||pond(x,z)||Math.abs(x+4.1)<2.4&&Math.abs(z+2.2)<2.3)continue;box(x,.20,z,.16,rr(.16,.27),.17,pick(['#82a76b','#648e66','#bbcb84']));}
+// A tiered five-storey pagoda; timber and shoji visible on all four sides.
+const px=-3.8,pz=-1.85;
+box(px,.30,pz,4.4,.37,4.4,C.stone3);box(px,.53,pz,4.14,.14,4.14,C.stone2);
+for(let i=0;i<3;i++)box(px,.16+i*.09,pz+2.3+i*.31,2.5-i*.12,.11,.55,C.stone2);
+for(let l=0;l<5;l++){
+let a=3.24-l*.31,y=.65+l*2.00,ht=1.58-l*.065;
+box(px,y+ht*.49,pz,a,ht,a,C.cream);
+box(px,y+ht*.12,pz,a+.22,.16,a+.22,C.wood);
+for(const s of [-1,1]){box(px,y+ht*.48,pz+s*(a/2+.05),a,.09,.115,C.wood);box(px+s*(a/2+.05),y+ht*.48,pz,.115,.09,a,C.wood);
+for(const d of [-1,0,1]){box(px+d*a*.27,y+ht*.52,pz+s*(a/2+.08),.09,ht*.84,.1,C.wood);box(px+s*(a/2+.08),y+ht*.52,pz+d*a*.27,.1,ht*.84,.09,C.wood);}}
+for(const xx of [-1,1])for(const zz of [-1,1])box(px+xx*(a*.47),y+ht*.49,pz+zz*(a*.47),.22,ht,.22,C.red);
+let roof=a+1.36;
+box(px,y+ht+.16,pz,roof,.29,roof,C.roof);
+box(px,y+ht+.39,pz,roof-.32,.19,roof-.32,C.roof2);
+box(px,y+ht+.57,pz,roof-.88,.19,roof-.88,C.roof);
+for(let k of [-1,1]){box(px+k*(roof/2-.10),y+ht+.07,pz,.22,.25,roof,C.roof2);box(px,y+ht+.07,pz+k*(roof/2-.1),roof,.25,.22,C.roof2);}
+}
+box(px,11.02,pz,.23,1.15,.23,C.gold);for(let i=0;i<4;i++)box(px,10.62+i*.32,pz,.7-i*.1,.1,.7-i*.1,C.gold);box(px,11.77,pz,.24,.23,.24,C.gold);
+// Red torii gate.
+const tx=5.95,tz=-2.9;
+for(const dx of [-1.7,1.7]){box(tx+dx,1.35,tz,.38,2.62,.39,C.red);box(tx+dx,.12,tz,.68,.21,.67,C.stone2);box(tx+dx,2.55,tz,.61,.29,.61,C.red2);}
+box(tx,2.6,tz,4.05,.33,.43,C.red);box(tx,3.22,tz,4.18,.38,.70,C.red2);box(tx,3.47,tz,4.35,.16,.78,C.roof);box(tx,3.00,tz,.22,.9,.20,C.red);box(tx,2.65,tz+.27,.85,.19,.19,C.gold);
+// Bridge over the pool, with raked rails.
+for(let i=0;i<14;i++){let u=(i/13)*2-1,x=1.0+(i/13)*4.75,arch=.47+.41*(1-u*u);box(x,.25+arch,2.15,.38,.19,1.50,pick([C.wood,C.wood2]),-.04);}
+for(const dz of [-.72,.72]){for(let j=0;j<6;j++){let u=(j/5)*2-1,x=1+j/5*4.8,y=.78+.41*(1-u*u);box(x,y+.50,2.15+dz,.17,1.08,.17,C.wood);if(j<5){let m=(j+.5)/5*2-1;box(x+.47,.90+.4*(1-m*m)+.66,2.15+dz,.98,.15,.18,C.wood2);}}}
+// Pond border and rocks.
+for(let i=0;i<48;i++){let a=i*Math.PI*2/48;let x=3.3+Math.cos(a)*3.0,z=2.1+Math.sin(a)*2.1;if(!topShape(x,z))continue;box(x,.13,z,rr(.24,.4),rr(.15,.29),rr(.3,.43),pick([C.stone,C.stone2,C.stone3]),rr(-.5,.5));}
+// Stone lanterns with glowing chambers.
+function lantern(x,z){box(x,.23,z,.8,.28,.8,C.stone3);box(x,.68,z,.38,.68,.38,C.stone);box(x,1.06,z,.76,.18,.76,C.stone3);
+for(let dx of [-.27,.27])for(let dz of [-.27,.27])box(x+dx,1.37,z+dz,.13,.58,.13,C.stone2);
+box(x,1.37,z,.45,.42,.44,C.lamp);box(x,1.72,z,.96,.23,.96,C.stone3);box(x,1.88,z,.59,.16,.59,C.stone2);box(x,2.08,z,.16,.29,.16,C.stone);}
+lantern(-.80,-4.3);lantern(7.5,.18);lantern(-1.0,4.4);
+function tree(x,z,height,amount){box(x,height*.48,z,.42,height,.45,C.bark);
+for(let i=0;i<5;i++){let a=i*Math.PI*2/5+rr(-.4,.4),dist=rr(.5,1.35),bh=height*.83+rr(-.35,.6);box(x+Math.cos(a)*dist*.55,bh-.46,z+Math.sin(a)*dist*.55,.30,1.3,.33,C.bark2,rr(-.3,.3));}
+for(let i=0;i<amount;i++){let a=rr(0,Math.PI*2),r=Math.pow(rand(),.57)*1.72,h=height+rr(-.45,1.8)+(.7-r)*.22;let xx=x+Math.cos(a)*r*1.2,zz=z+Math.sin(a)*r*.86;if(!topShape(xx,zz))continue;let c=pick([C.pink,C.pink2,C.pink3,C.pink4]);box(xx,h,zz,rr(.25,.51),rr(.24,.48),rr(.26,.5),c);}}
+tree(-7.45,2.75,2.55,115);tree(-.25,5.1,2.6,82);tree(7.25,4.65,2.5,94);tree(-7.45,-5,2.35,81);
+// Bamboo and small stones complete the scene.
+for(let i=0;i<40;i++){let a=rr(0,Math.PI*2),r=rr(.78,.96),x=Math.cos(a)*8.6*r,z=Math.sin(a)*6.1*r;if(!topShape(x,z)||pond(x,z))continue;let ht=rr(.7,2.2);box(x,ht/2+.14,z,.10,ht,.1,pick(['#769475','#93b083','#6c8c6c']));box(x,ht+.18,z,.34,.23,.34,C.leaves);}
+for(let i=0;i<22;i++){let x=rr(-8.5,8.5),z=rr(-5.9,5.9);if(topShape(x,z)&&!pond(x,z)&&Math.abs(x+3.8)>2.5)box(x,.25,z,rr(.22,.5),rr(.18,.38),rr(.3,.52),pick([C.stone,C.stone2]));}
+function ellipse(out,x,y,z,rx,rz,col){const color=rgb(col);for(let k=0;k<64;k++){let a=k*Math.PI*2/64,b=(k+1)*Math.PI*2/64,points=[[x,y,z],[x+Math.cos(a)*rx,y,z+Math.sin(a)*rz],[x+Math.cos(b)*rx,y,z+Math.sin(b)*rz]];for(const p of points)out.push(...p,0,1,0,...color);}}
+ellipse(water,3.3,.04,2.1,2.85,1.94,C.water);
+// Independent 2D projection fallback for WebGL-disabled in-app browsers.
+// This also means the site never hangs on a missing GPU context.
+function fallback(){
+ const ctx=canvas.getContext('2d');if(!ctx){problem.style.display='block';problem.textContent='此环境无法创建绘图画布。';return;}
+ let az=.75,pitch=.6,dist=26,auto=true,petalsOn=true,night=false,down=new Map(),pinch=null,start=performance.now(),last=0;
+ const body=document.body;
+ const faces=F.map(([n,f])=>({normal:n,pts:f}));
+ function project(px,py,pz,eye,right,up,forward,W,H,focal){let v=[px-eye[0],py-eye[1],pz-eye[2]],d=Math.max(1, v[0]*forward[0]+v[1]*forward[1]+v[2]*forward[2]);return [W*.5+(v[0]*right[0]+v[1]*right[1]+v[2]*right[2])*focal/d,H*.52-(v[0]*up[0]+v[1]*up[1]+v[2]*up[2])*focal/d];}
+ function fillQuad(pts,c){ctx.beginPath();ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<4;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();ctx.fillStyle=c;ctx.fill();}
+ function color(hex,factor){let c=rgb(hex);return `rgb(${Math.min(255,Math.round(c[0]*255*factor))},${Math.min(255,Math.round(c[1]*255*factor))},${Math.min(255,Math.round(c[2]*255*factor))})`;}
+ function draw(now){requestAnimationFrame(draw);if(now-last<32)return;let delta=Math.min(.06,(now-last)/1000||.03);last=now;if(auto)az+=delta*.085;
+ const dpr=Math.min(devicePixelRatio||1,1.3),W=innerWidth,H=innerHeight;canvas.width=Math.floor(W*dpr);canvas.height=Math.floor(H*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,W,H);
+ let aspect=W/H,rr=dist*(aspect<.8?1+(.8-aspect)*2.85:1.35),eye=[Math.cos(az)*Math.cos(pitch)*rr,2.7+Math.sin(pitch)*rr,Math.sin(az)*Math.cos(pitch)*rr],at=[0,3,0];let forward=normalize(at.map((x,i)=>x-eye[i]));let right=normalize(cross(forward,[0,1,0]));let up=cross(right,forward);let focal=H/(2*Math.tan((aspect<.8?44:41)*Math.PI/360));
+ const ordered=fallbackBoxes.map((b,i)=>({b,d:(b[0]-eye[0])**2+(b[1]-eye[1])**2+(b[2]-eye[2])**2})).sort((a,b)=>b.d-a.d);
+ for(const {b} of ordered){let[x,y,z,w,h,d,col,yaw]=b,cx=Math.cos(yaw),sz=Math.sin(yaw);const colorBase=Array.isArray(col)?'#a9af9d':col;
+ for(let fi=0;fi<faces.length;fi++){let {normal,pts}=faces[fi],nx=normal[0]*cx-normal[2]*sz,ny=normal[1],nz=normal[0]*sz+normal[2]*cx;if(nx*(eye[0]-x)+ny*(eye[1]-y)+nz*(eye[2]-z)<0)continue;
+ let projected=pts.map(p=>{let ox=(p[0]-.5)*w,oz=(p[2]-.5)*d;return project(x+ox*cx-oz*sz,y+(p[1]-.5)*h,z+ox*sz+oz*cx,eye,right,up,forward,W,H,focal)});let light=Math.max(.1,nx*(-.6)+ny*.8+nz*.48);let factor=(night?.46:.72)+(night?.39:.4)*light;
+ fillQuad(projected,color(colorBase,factor));}}
+ // Floating petals and slow koi trajectories share the same orbit projection.
+ let t=(now-start)/1000;
+ for(let i=0;i<6;i++){let theta=t*(.34+(i%3)*.08)+i*3.3,xx=3.3+Math.cos(theta)*(1.1+(i%2)*.44),zz=2.1+Math.sin(theta)*(.66+(i%3)*.23),a=project(xx,.26,zz,eye,right,up,forward,W,H,focal),b=project(xx-Math.sin(theta)*.32,.26,zz+Math.cos(theta)*.32,eye,right,up,forward,W,H,focal);let angle=Math.atan2(b[1]-a[1],b[0]-a[0]);ctx.save();ctx.translate(a[0],a[1]);ctx.rotate(angle);ctx.fillStyle=['#ef9258','#ffede0','#edb578','#fbebe0','#c9ad96','#e98d65'][i];ctx.beginPath();ctx.ellipse(0,0,5,2.8,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.moveTo(-4,0);ctx.lineTo(-9,-3);ctx.lineTo(-9,3);ctx.closePath();ctx.fill();ctx.restore();}
+ if(petalsOn)for(let i=0;i<65;i++){let id=i*7,p=petals;let h=((p[id+1]-t*(.23+(p[id+3]*19%1)*.29)+10)%9)-.6;let pos=project(p[id]+Math.sin(t*.5+i)*.4,h,p[id+2],eye,right,up,forward,W,H,focal);ctx.fillStyle=i%3?'rgba(247,207,212,.88)':'rgba(221,144,174,.86)';ctx.beginPath();ctx.ellipse(pos[0],pos[1],1.8+(i%3)*.45,1.15+(i%2)*.4,t+i,0,Math.PI*2);ctx.fill();}
+ }
+ function zoom(x){dist=Math.max(17,Math.min(49,dist+x));}
+ canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);down.set(e.pointerId,[e.clientX,e.clientY]);pinch=null;});
+ canvas.addEventListener('pointermove',e=>{if(!down.has(e.pointerId))return;let p=down.get(e.pointerId);let dx=e.clientX-p[0],dy=e.clientY-p[1];down.set(e.pointerId,[e.clientX,e.clientY]);let pp=[...down.values()];if(pp.length>1){let d=Math.hypot(pp[0][0]-pp[1][0],pp[0][1]-pp[1][1]);if(pinch!=null)zoom((pinch-d)*.06);pinch=d;}else{az-=dx*.007;pitch=Math.max(.21,Math.min(1.17,pitch+dy*.006));auto=false;document.getElementById('orbit').classList.remove('on');}});
+ for(let type of ['pointerup','pointercancel'])canvas.addEventListener(type,e=>{down.delete(e.pointerId);pinch=null;});
+ canvas.addEventListener('wheel',e=>{e.preventDefault();zoom(e.deltaY*.016);},{passive:false});
+ document.getElementById('orbit').onclick=()=>{auto=!auto;document.getElementById('orbit').classList.toggle('on',auto)};
+ document.getElementById('petals').onclick=()=>{petalsOn=!petalsOn;document.getElementById('petals').classList.toggle('on',petalsOn)};
+ document.getElementById('time').onclick=()=>{night=!night;body.classList.toggle('night',night);document.getElementById('time').classList.toggle('on',night);document.getElementById('time').textContent=night?'夕阳':'月夜';};
+ document.getElementById('reset').onclick=()=>{az=.75;pitch=.6;dist=26;auto=true;document.getElementById('orbit').classList.add('on')};
+ requestAnimationFrame(draw);
+}
+const petals=[];for(let i=0;i<95;i++){petals.push(rr(-9,9),rr(0,9),rr(-6,6),rand(),...rgb(pick([C.pink2,C.pink4,C.pink3])));}
+if(!gl){fallback();return;}
+// Buffer packing and lightweight GL resource setup.
+function meshData(data,usage=gl.STATIC_DRAW){let vao=gl.createVertexArray(),buf=gl.createBuffer();gl.bindVertexArray(vao);gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),usage);for(let i=0;i<3;i++){gl.enableVertexAttribArray(i);gl.vertexAttribPointer(i,3,gl.FLOAT,false,36,i*12);}gl.bindVertexArray(null);return{vao,buf,count:data.length/9};}
+const sceneMesh=meshData(solid),waterMesh=meshData(water),koiMesh=meshData(new Array(36*9*23).fill(0),gl.DYNAMIC_DRAW);
+
+const petalVao=gl.createVertexArray(),petalBuffer=gl.createBuffer();gl.bindVertexArray(petalVao);gl.bindBuffer(gl.ARRAY_BUFFER,petalBuffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(petals),gl.STATIC_DRAW);gl.enableVertexAttribArray(0);gl.vertexAttribPointer(0,4,gl.FLOAT,false,28,0);gl.enableVertexAttribArray(1);gl.vertexAttribPointer(1,3,gl.FLOAT,false,28,16);gl.bindVertexArray(null);
+// One 1024x1024 shadow map, lit with a warm directional sun.
+const size=1024,shadowTex=gl.createTexture(),shadowFbo=gl.createFramebuffer();gl.bindTexture(gl.TEXTURE_2D,shadowTex);gl.texImage2D(gl.TEXTURE_2D,0,gl.DEPTH_COMPONENT24,size,size,0,gl.DEPTH_COMPONENT,gl.UNSIGNED_INT,null);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MIN_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_MAG_FILTER,gl.NEAREST);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_S,gl.CLAMP_TO_EDGE);gl.texParameteri(gl.TEXTURE_2D,gl.TEXTURE_WRAP_T,gl.CLAMP_TO_EDGE);gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFbo);gl.framebufferTexture2D(gl.FRAMEBUFFER,gl.DEPTH_ATTACHMENT,gl.TEXTURE_2D,shadowTex,0);gl.drawBuffers([gl.NONE]);gl.readBuffer(gl.NONE);let shadowOK=gl.checkFramebufferStatus(gl.FRAMEBUFFER)===gl.FRAMEBUFFER_COMPLETE;gl.bindFramebuffer(gl.FRAMEBUFFER,null);
+function normalize(x){let l=Math.hypot(...x);return x.map(a=>a/l)}
+function cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]]}
+function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]}
+function lookAt(eye,at){let z=normalize(eye.map((n,i)=>n-at[i])),x=normalize(cross([0,1,0],z)),y=cross(z,x);return[x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,eye),-dot(y,eye),-dot(z,eye),1]}
+function multiply(a,b){let r=new Float32Array(16);for(let c=0;c<4;c++)for(let rr=0;rr<4;rr++)for(let k=0;k<4;k++)r[c*4+rr]+=a[k*4+rr]*b[c*4+k];return r;}
+function perspective(fov,aspect,near,far){let f=1/Math.tan(fov/2);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)/(near-far),-1,0,0,2*far*near/(near-far),0]);}
+function ortho(l,r,b,t,n,f){return new Float32Array([2/(r-l),0,0,0,0,2/(t-b),0,0,0,0,-2/(f-n),0,-(r+l)/(r-l),-(t+b)/(t-b),-(f+n)/(f-n),1]);}
+const lightVP=multiply(ortho(-17,17,-17,17,1,75),lookAt([-20,31,18],[0,1,0]));
+function uniMat(p,name,m){gl.uniformMatrix4fv(gl.getUniformLocation(p,name),false,m)}
+if(shadowOK){gl.bindFramebuffer(gl.FRAMEBUFFER,shadowFbo);gl.viewport(0,0,size,size);gl.clear(gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.enable(gl.CULL_FACE);gl.cullFace(gl.FRONT);gl.useProgram(shadowProg);uniMat(shadowProg,'uLightViewProj',lightVP);gl.bindVertexArray(sceneMesh.vao);gl.drawArrays(gl.TRIANGLES,0,sceneMesh.count);gl.cullFace(gl.BACK);gl.bindFramebuffer(gl.FRAMEBUFFER,null);}
+const controls={az:.69,pitch:.59,dist:26,auto:!matchMedia('(prefers-reduced-motion:reduce)').matches,petals:true,night:false},state={down:new Map(),lastDist:null,last:performance.now(),elapsed:0,frame:0};
+function adjustZoom(d){controls.dist=Math.max(17,Math.min(49,controls.dist+d));}
+canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);state.down.set(e.pointerId,[e.clientX,e.clientY]);state.lastDist=null;});
+canvas.addEventListener('pointermove',e=>{if(!state.down.has(e.pointerId))return;const old=state.down.get(e.pointerId),dx=e.clientX-old[0],dy=e.clientY-old[1];state.down.set(e.pointerId,[e.clientX,e.clientY]);const points=[...state.down.values()];if(points.length>1){let d=Math.hypot(points[0][0]-points[1][0],points[0][1]-points[1][1]);if(state.lastDist!==null)adjustZoom((state.lastDist-d)*.065);state.lastDist=d;}else{controls.az-=dx*.007;controls.pitch=Math.max(.21,Math.min(1.17,controls.pitch+dy*.006));controls.auto=false;document.getElementById('orbit').classList.remove('on');}});
+function pointerEnd(e){state.down.delete(e.pointerId);state.lastDist=null;}
+canvas.addEventListener('pointerup',pointerEnd);canvas.addEventListener('pointercancel',pointerEnd);canvas.addEventListener('wheel',e=>{e.preventDefault();adjustZoom(e.deltaY*.015);},{passive:false});
+const button=(id,fn)=>document.getElementById(id).addEventListener('click',fn);
+button('orbit',()=>{controls.auto=!controls.auto;document.getElementById('orbit').classList.toggle('on',controls.auto)});
+button('petals',()=>{controls.petals=!controls.petals;document.getElementById('petals').classList.toggle('on',controls.petals)});
+button('time',()=>{controls.night=!controls.night;document.body.classList.toggle('night',controls.night);document.getElementById('time').textContent=controls.night?'夕阳':'月夜';document.getElementById('time').classList.toggle('on',controls.night)});
+button('reset',()=>{controls.az=.69;controls.pitch=.59;controls.dist=26;controls.auto=true;document.getElementById('orbit').classList.add('on')});
+function draw(mesh){gl.bindVertexArray(mesh.vao);gl.drawArrays(gl.TRIANGLES,0,mesh.count)}
+function uniforms(t,view,alpha,waterFlag){gl.useProgram(prog);uniMat(prog,'uViewProj',view);uniMat(prog,'uLightViewProj',lightVP);gl.uniform1f(gl.getUniformLocation(prog,'uNight'),controls.night?1:0);gl.uniform1f(gl.getUniformLocation(prog,'uTime'),t);gl.uniform1f(gl.getUniformLocation(prog,'uAlpha'),alpha);gl.uniform1f(gl.getUniformLocation(prog,'uWater'),waterFlag);gl.activeTexture(gl.TEXTURE0);gl.bindTexture(gl.TEXTURE_2D,shadowTex);gl.uniform1i(gl.getUniformLocation(prog,'uShadow'),0)}
+const fishColors=['#f17c48','#f1eee6','#eaa05a','#e5e2d1','#b7a8a1'];
+function animateFish(t){fishVerts.length=0;for(let i=0;i<6;i++){const s=i*3.3,a=t*(.34+(i%3)*.08)+s,x=3.3+Math.cos(a)*(1.10+(i%2)*.44),z=2.1+Math.sin(a)*(.66+(i%3)*.23),dx=-Math.sin(a),dz=Math.cos(a),yaw=Math.atan2(-dx,dz),v=rr(0,0);const col=fishColors[i%5];cube(fishVerts,x,.125,z,.45,.16,.23,col,yaw);cube(fishVerts,x+Math.sin(yaw)*.17,.16,z+Math.cos(yaw)*.17,.18,.07,.24,'#fff1e0',yaw);cube(fishVerts,x-Math.sin(yaw)*.24,.12,z-Math.cos(yaw)*.24,.14,.08,.24,col,yaw+Math.sin(t*6+i)*.6);}}
+let width=0,height=0;
+function resize(){let dpr=Math.min(devicePixelRatio||1,1.5),w=Math.max(1,Math.floor(innerWidth*dpr)),h=Math.max(1,Math.floor(innerHeight*dpr));if(w===width&&h===height)return;width=w;height=h;canvas.width=w;canvas.height=h;}addEventListener('resize',resize);resize();
+function frame(now){requestAnimationFrame(frame);let delta=Math.min(.06,(now-state.last)/1000);state.last=now;state.elapsed+=delta;if(delta<0)return;if(now-state.frame<22)return;state.frame=now;resize();if(controls.auto)controls.az+=delta*.09;
+const aspect=width/height;let mobile=aspect<.8;let dist=controls.dist*(mobile?(1+(.8-aspect)*2.85):1.35);const az=controls.az,el=controls.pitch,eye=[Math.cos(az)*Math.cos(el)*dist,2.7+Math.sin(el)*dist,Math.sin(az)*Math.cos(el)*dist],view=multiply(perspective((mobile?44:41)*Math.PI/180,aspect,.1,110),lookAt(eye,[0,3,0]));
+gl.bindFramebuffer(gl.FRAMEBUFFER,null);gl.viewport(0,0,width,height);gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);gl.enable(gl.DEPTH_TEST);gl.disable(gl.BLEND);gl.disable(gl.CULL_FACE);uniforms(state.elapsed,view,1,0);draw(sceneMesh);
+gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE_MINUS_SRC_ALPHA);gl.depthMask(false);uniforms(state.elapsed,view,.87,1);draw(waterMesh);gl.depthMask(true);
+animateFish(state.elapsed);gl.bindBuffer(gl.ARRAY_BUFFER,koiMesh.buf);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(fishVerts),gl.DYNAMIC_DRAW);koiMesh.count=fishVerts.length/9;uniforms(state.elapsed,view,1,0);draw(koiMesh);
+if(controls.petals){gl.useProgram(petalProg);uniMat(petalProg,'uViewProj',view);gl.uniform1f(gl.getUniformLocation(petalProg,'uTime'),state.elapsed);gl.uniform1f(gl.getUniformLocation(petalProg,'uSize'),Math.min(7,3.1*(devicePixelRatio||1)));gl.disable(gl.DEPTH_TEST);gl.bindVertexArray(petalVao);gl.drawArrays(gl.POINTS,0,petals.length/7);}
+gl.bindVertexArray(null);}
+requestAnimationFrame(frame);
+})();
+</script></body></html>
