@@ -1,6 +1,6 @@
 const { chromium } = require('playwright');
 (async()=>{
- const browser=await chromium.launch({headless:true,args:['--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--disable-dev-shm-usage','--no-sandbox']});
+ const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/google-chrome',args:['--enable-webgl','--use-gl=angle','--use-angle=swiftshader','--disable-dev-shm-usage','--no-sandbox']});
  for (const mode of ['desktop','mobile']){
   const page=await browser.newPage({viewport:mode==='mobile'?{width:393,height:852}:{width:1280,height:800},isMobile:mode==='mobile',hasTouch:mode==='mobile',deviceScaleFactor:1});
   const faults=[];page.on('pageerror',e=>faults.push(e.stack||String(e)));page.on('console',m=>{if(m.type()==='error')faults.push(m.text())});
